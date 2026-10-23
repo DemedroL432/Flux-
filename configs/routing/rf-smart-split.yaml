@@ -1,0 +1,136 @@
+# Профиль: rf-smart-split — РФ умный сплит
+#
+# Оптимизирован для российских пользователей:
+# — Российские сервисы (.ru, Яндекс, ВКонтакте, Сбер, Ozon…) идут напрямую
+# — YouTube, Google, Discord, Telegram, WhatsApp — через DPI-обход (без VLESS)
+# — Мессенджеры (MTProto) — через VLESS (так как Smart DNS их не чинит)
+# — Всё остальное — напрямую (final: direct)
+#
+# DPI нужен для обхода ТСПУ: включите его на вкладке DPI.
+#
+# Чтобы переопределить встроенный пресет: скопируйте этот файл в папку
+# routing/ рядом с PulseShieldDesktop.exe — приложение загрузит его при запуске.
+
+name: rf-smart-split
+final: direct
+rules:
+  - name: local-direct
+    domains:
+      - "*.local"
+      - "localhost"
+      - "*.lan"
+    action: direct
+
+  - name: private-lan-direct
+    cidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.0/8"
+    action: direct
+
+  - name: ru-tld-direct
+    # Весь .ru / .рф / .su — напрямую
+    domainSuffixes:
+      - "ru"
+      - "xn--p1ai"
+      - "su"
+    action: direct
+
+  - name: ru-services-direct
+    # Основные российские сервисы (не только TLD)
+    domains:
+      - "yandex.ru"
+      - "*.yandex.ru"
+      - "ya.ru"
+      - "vk.com"
+      - "*.vk.com"
+      - "mail.ru"
+      - "*.mail.ru"
+      - "ok.ru"
+      - "*.ok.ru"
+      - "dzen.ru"
+      - "*.dzen.ru"
+      - "rutube.ru"
+      - "*.rutube.ru"
+      - "kinopoisk.ru"
+      - "*.kinopoisk.ru"
+      - "avito.ru"
+      - "*.avito.ru"
+      - "sber.ru"
+      - "*.sber.ru"
+      - "ozon.ru"
+      - "*.ozon.ru"
+      - "wildberries.ru"
+      - "*.wildberries.ru"
+    action: direct
+
+  - name: launchers-direct
+    processes:
+      - "steam.exe"
+      - "steamwebhelper.exe"
+      - "EpicGamesLauncher.exe"
+      - "RiotClientServices.exe"
+      - "VALORANT.exe"
+      - "LeagueClient.exe"
+      - "Battle.net.exe"
+      - "cs2.exe"
+      - "dota2.exe"
+    action: direct
+
+  - name: xbox-dns-direct
+    # AI, JetBrains, GitHub, Spotify, Twitch — Xbox Smart DNS их чинит без VLESS
+    domainSuffixes:
+      - "xbox.com"
+      - "xboxlive.com"
+      - "openai.com"
+      - "chatgpt.com"
+      - "anthropic.com"
+      - "claude.ai"
+      - "github.com"
+      - "githubusercontent.com"
+      - "jetbrains.com"
+      - "spotify.com"
+      - "twitch.tv"
+      - "cursor.com"
+      - "cursor.sh"
+    action: dpi-bypass
+
+  - name: proxy-only-messengers
+    # Мессенджеры — MTProto/DC по IP, Smart DNS не помогает → VLESS
+    domainSuffixes:
+      - "telegram.org"
+      - "t.me"
+      - "telegram.me"
+      - "whatsapp.com"
+      - "whatsapp.net"
+      - "signal.org"
+      - "messenger.com"
+    action: proxy
+
+  - name: dpi-direct-services
+    # YouTube, Google, Discord, Instagram, Twitter/X — DPI-обход без VLESS
+    domainSuffixes:
+      - "youtube.com"
+      - "youtu.be"
+      - "ytimg.com"
+      - "googlevideo.com"
+      - "google.com"
+      - "gstatic.com"
+      - "googleapis.com"
+      - "twitter.com"
+      - "twimg.com"
+      - "x.com"
+      - "instagram.com"
+      - "facebook.com"
+      - "fbcdn.net"
+      - "reddit.com"
+      - "discord.com"
+      - "discord.gg"
+      - "discordapp.com"
+      - "discord.media"
+      - "slack.com"
+      - "zoom.us"
+      - "medium.com"
+      - "wikipedia.org"
+    action: dpi-bypass

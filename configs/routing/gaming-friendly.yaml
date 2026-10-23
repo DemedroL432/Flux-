@@ -1,0 +1,80 @@
+# Профиль: gaming-friendly — игры + медиа
+#
+# Игровые лаунчеры и античиты идут напрямую (минимальный пинг).
+# Медиа и мессенджеры — через VLESS.
+# final: direct — то, что не попало в правила, идёт напрямую.
+#
+# Чтобы переопределить встроенный пресет: скопируйте этот файл в папку
+# routing/ рядом с PulseShieldDesktop.exe — приложение загрузит его при запуске.
+
+name: gaming-friendly
+final: direct
+rules:
+  - name: local-direct
+    domains:
+      - "*.local"
+      - "localhost"
+      - "*.lan"
+    action: direct
+
+  - name: private-lan-direct
+    cidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.0/8"
+    action: direct
+
+  - name: ru-tld-direct
+    domainSuffixes:
+      - "ru"
+      - "xn--p1ai"
+      - "su"
+    action: direct
+
+  - name: launchers-direct
+    # Игровые клиенты — всегда напрямую для минимального пинга
+    processes:
+      - "steam.exe"
+      - "steamwebhelper.exe"
+      - "EpicGamesLauncher.exe"
+      - "RiotClientServices.exe"
+      - "VALORANT.exe"
+      - "LeagueClient.exe"
+      - "Battle.net.exe"
+      - "cs2.exe"
+      - "dota2.exe"
+    action: direct
+
+  - name: xbox-dns-direct
+    domainSuffixes:
+      - "xbox.com"
+      - "xboxlive.com"
+      - "openai.com"
+      - "chatgpt.com"
+      - "anthropic.com"
+      - "claude.ai"
+      - "github.com"
+      - "jetbrains.com"
+      - "spotify.com"
+      - "twitch.tv"
+    action: dpi-bypass
+
+  - name: media-social-via-proxy
+    # Медиа и мессенджеры через VLESS
+    domainSuffixes:
+      - "telegram.org"
+      - "t.me"
+      - "whatsapp.com"
+      - "signal.org"
+      - "youtube.com"
+      - "youtu.be"
+      - "google.com"
+      - "instagram.com"
+      - "facebook.com"
+      - "twitter.com"
+      - "x.com"
+      - "discord.com"
+      - "discord.gg"
+      - "reddit.com"
+    action: proxy

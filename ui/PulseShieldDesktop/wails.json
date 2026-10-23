@@ -1,0 +1,21 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Flux",
+  "outputfilename": "Flux",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "FLUX",
+    "productName": "FLUX",
+    "productVersion": "0.7.4",
+    "copyright": "Copyright © FLUX",
+    "comments": "FLUX — обход DPI и локальный прокси"
+  },
+  "author": {
+    "name": "",
+    "email": ""
+  }
+}
+

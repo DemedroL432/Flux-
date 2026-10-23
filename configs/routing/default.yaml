@@ -1,0 +1,34 @@
+# Профиль: default — весь трафик через VLESS
+#
+# Используется по умолчанию после установки.
+# Все исходящие соединения уходят через VLESS-прокси, кроме локальных доменов
+# и российских TLD (*.ru / *.рф), которые идут напрямую.
+#
+# Чтобы переопределить встроенный пресет: скопируйте этот файл в папку
+# routing/ рядом с PulseShieldDesktop.exe — приложение загрузит его при запуске.
+
+name: default
+rules:
+  - name: local-direct
+    domains:
+      - "*.local"
+      - "localhost"
+    action: direct
+
+  - name: private-lan-direct
+    cidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.0/8"
+    action: direct
+
+  - name: ru-tld-direct
+    domainSuffixes:
+      - "ru"
+      - "xn--p1ai"
+      - "su"
+    action: direct
+
+  - name: default-proxy
+    action: proxy

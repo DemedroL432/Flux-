@@ -1,0 +1,4 @@
+build/bin
+build/windows/icon.ico
+node_modules
+frontend/dist

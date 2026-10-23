@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flux — гибкий VPN и DPI</title>
+<style>
+  /* ── Apple-style motion landing ──
+     Стандартная кривая появления: cubic-bezier(0.23, 1, 0.32, 1) */
+  :root {
+    --ease: cubic-bezier(0.23, 1, 0.32, 1);
+    --bg: #000;
+    --fg: #fff;
+    --muted: #98989f;
+    --card: #1c1c1e;
+    --accent: #30d158;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+  section { padding: 120px 24px; max-width: 980px; margin: 0 auto; }
+
+  /* ── HERO: заголовок появляется обводкой, затем заполняется ── */
+  .hero { min-height: 92vh; display: flex; flex-direction: column; justify-content: center; }
+  .hero-title {
+    font-size: clamp(48px, 11vw, 132px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+    color: transparent;
+    -webkit-text-stroke: 1.5px rgba(255,255,255,0.85);
+    animation: strokeFill 1.6s var(--ease) 0.2s forwards;
+  }
+  @keyframes strokeFill {
+    0%   { color: transparent; -webkit-text-stroke-width: 1.5px; }
+    60%  { color: transparent; -webkit-text-stroke-width: 1.5px; }
+    100% { color: #fff; -webkit-text-stroke-width: 0px; }
+  }
+  .hero-sub {
+    margin-top: 28px;
+    font-size: clamp(17px, 2.4vw, 22px);
+    color: var(--muted);
+    max-width: 540px;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp 0.6s var(--ease) 1.0s forwards;
+  }
+  .hero-cta {
+    margin-top: 40px;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp 0.6s var(--ease) 1.2s forwards;
+  }
+
+  /* ── Параллакс-фон: мягкие световые пятна на разной скорости ── */
+  .parallax-layer {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  }
+  .blob {
+    position: absolute; border-radius: 50%;
+    filter: blur(80px); opacity: 0.5;
+  }
+  .blob-1 { width: 420px; height: 420px; background: #1f6feb; top: 8%; left: -8%; }
+  .blob-2 { width: 380px; height: 380px; background: #30d158; bottom: 12%; right: -6%; }
+  .blob-3 { width: 300px; height: 300px; background: #5e5ce6; top: 48%; left: 42%; }
+
+  /* ── RIPPLE button ── */
+  .btn {
+    position: relative; overflow: hidden;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 16px 32px; border: none; border-radius: 980px;
+    background: #fff; color: #000;
+    font: inherit; font-size: 17px; font-weight: 600; cursor: pointer;
+    transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(255,255,255,0.18); }
+  .ripple {
+    position: absolute; border-radius: 50%;
+    background: rgba(0,0,0,0.18);
+    transform: scale(0); animation: rippleAnim 0.6s var(--ease);
+    pointer-events: none;
+  }
+  @keyframes rippleAnim { to { transform: scale(4); opacity: 0; } }
+
+  /* ── Reveal on scroll: fade + slide up, каскад ── */
+  .reveal { opacity: 0; transform: translateY(36px); transition: opacity 0.6s var(--ease), transform 0.6s var(--ease); }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+
+  .section-label { font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+  .section-title { font-size: clamp(32px, 5vw, 56px); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 56px; }
+
+  /* ── Cards: подъём + размытие фона за ней при наведении ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+  .card {
+    position: relative;
+    padding: 36px 28px; border-radius: 24px;
+    background: rgba(28,28,30,0.6);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(2px);
+    transition: transform 0.4s var(--ease), backdrop-filter 0.4s var(--ease), border-color 0.4s var(--ease);
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    backdrop-filter: blur(12px);
+    border-color: rgba(255,255,255,0.18);
+  }
+  .card-icon { width: 48px; height: 48px; border-radius: 14px; background: rgba(48,209,88,0.14); display: grid; place-items: center; margin-bottom: 20px; color: var(--accent); }
+  .card h3 { font-size: 22px; font-weight: 650; margin-bottom: 10px; letter-spacing: -0.01em; }
+  .card p { color: var(--muted); font-size: 16px; }
+
+  @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="parallax-layer">
+  <div class="blob blob-1" data-speed="0.15"></div>
+  <div class="blob blob-2" data-speed="0.28"></div>
+  <div class="blob blob-3" data-speed="0.40"></div>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <h1 class="hero-title">Flux.</h1>
+  <p class="hero-sub">Гибкий VPN и настраиваемый обход блокировок. Один тумблер — и ты снова в открытом интернете.</p>
+  <div class="hero-cta">
+    <button class="btn" id="cta">Скачать для Windows →</button>
+  </div>
+</section>
+
+<!-- ADVANTAGES -->
+<section>
+  <div class="section-label reveal">Почему Flux</div>
+  <h2 class="section-title reveal">Скорость. Контроль. Тишина.</h2>
+  <div class="cards">
+    <div class="card reveal" data-delay="0">
+      <div class="card-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 5 14h6l-1 8 9-13h-6l1-7Z"/></svg>
+      </div>
+      <h3>Гибкий DPI</h3>
+      <p>Обход ТСПУ с автоподбором стратегии. Меняется фильтрация — одна кнопка чинит всё.</p>
+    </div>
+    <div class="card reveal" data-delay="100">
+      <div class="card-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
+      </div>
+      <h3>Умная маршрутизация</h3>
+      <p>Сам выбираешь, что идёт через VPN, что напрямую, а что через обход. Свои правила и профили.</p>
+    </div>
+    <div class="card reveal" data-delay="200">
+      <div class="card-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3c3.4 4 3.4 14 0 18M3 12h18"/></svg>
+      </div>
+      <h3>VLESS-ядро</h3>
+      <p>Современный протокол на sing-box: REALITY, мультиплекс, минимальная задержка.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+  /* ── Ripple ── */
+  const cta = document.getElementById('cta');
+  cta.addEventListener('click', (e) => {
+    const r = document.createElement('span');
+    r.className = 'ripple';
+    const rect = cta.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    r.style.width = r.style.height = size + 'px';
+    r.style.left = (e.clientX - rect.left - size / 2) + 'px';
+    r.style.top  = (e.clientY - rect.top  - size / 2) + 'px';
+    cta.appendChild(r);
+    setTimeout(() => r.remove(), 600);
+  });
+
+  /* ── Reveal on scroll (Intersection Observer), каскад по data-delay ── */
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        const delay = entry.target.dataset.delay || 0;
+        entry.target.style.transitionDelay = delay + 'ms';
+        entry.target.classList.add('in');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15 });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+  /* ── Параллакс: слои двигаются с разной скоростью ── */
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY;
+      document.querySelectorAll('.blob').forEach((b) => {
+        const speed = parseFloat(b.dataset.speed) || 0.2;
+        b.style.transform = `translateY(${y * speed}px)`;
+      });
+      ticking = false;
+    });
+  });
+</script>
+</body>
+</html>

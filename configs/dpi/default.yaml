@@ -1,0 +1,6 @@
+name: default
+description: Basic DPI bypass profile placeholder
+options:
+  fragmentation: true
+  fakeSNI: true
+  ttlAdjust: 0

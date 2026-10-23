@@ -1,0 +1,4 @@
+strategy_name=local
+strategy_id=local
+bat_file=
+installed=

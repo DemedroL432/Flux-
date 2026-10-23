@@ -1,0 +1,69 @@
+# Профиль: selective-proxy — выборочный VPN
+#
+# Только указанные в списке домены уходят через VLESS.
+# Всё остальное идёт напрямую (final: direct).
+# Подходит, если нужен VPN только для заблокированных сайтов, а остальной
+# трафик (игры, российские сервисы) должен работать без прокси.
+#
+# Чтобы переопределить встроенный пресет: скопируйте этот файл в папку
+# routing/ рядом с PulseShieldDesktop.exe — приложение загрузит его при запуске.
+
+name: selective-proxy
+final: direct
+rules:
+  - name: local-direct
+    domains:
+      - "*.local"
+      - "localhost"
+      - "*.lan"
+    action: direct
+
+  - name: private-lan-direct
+    cidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.0/8"
+    action: direct
+
+  - name: ru-tld-direct
+    domainSuffixes:
+      - "ru"
+      - "xn--p1ai"
+      - "su"
+    action: direct
+
+  - name: xbox-dns-direct
+    # Сервисы с Xbox Smart DNS: AI, игры, JetBrains, GitHub, Twitch, Spotify
+    domainSuffixes:
+      - "xbox.com"
+      - "xboxlive.com"
+      - "openai.com"
+      - "chatgpt.com"
+      - "anthropic.com"
+      - "claude.ai"
+      - "github.com"
+      - "githubusercontent.com"
+      - "jetbrains.com"
+      - "spotify.com"
+      - "twitch.tv"
+    action: dpi-bypass
+
+  - name: media-social-via-proxy
+    # Мессенджеры и медиа — через VLESS
+    domainSuffixes:
+      - "telegram.org"
+      - "t.me"
+      - "whatsapp.com"
+      - "signal.org"
+      - "youtube.com"
+      - "youtu.be"
+      - "google.com"
+      - "instagram.com"
+      - "facebook.com"
+      - "twitter.com"
+      - "x.com"
+      - "discord.com"
+      - "discord.gg"
+      - "reddit.com"
+    action: proxy

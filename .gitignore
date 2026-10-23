@@ -1,0 +1,54 @@
+# Heavy build outputs and temp folders
+dist/
+**/dist/
+**/build/
+$extract/
+Output/
+**/Output/
+Flux-win64-portable/
+pulseshield-win64*/
+%DST%/
+
+# Workflows (requires separate GitHub workflow token scope to push)
+.github/
+
+# Frontend node_modules
+node_modules/
+**/node_modules/
+
+# Root installers, executables and packages
+/*.exe
+/*.zip
+/*.7z
+/*.tar.gz
+/*.iso
+vpnboost.exe
+
+# Large third-party binaries not tracked in git (downloaded or bundled)
+third_party/mesa/
+third_party/core/sing-box.exe
+
+# Temporary, cache and dump files
+*.tmp
+*.log
+*.db
+cache.db
+tree*.txt
+_f.py
+
+# IDE & OS temporary files
+.vs/
+.idea/
+.vscode/
+.cursor/
+.claude/
+.agents/
+\!!!don't touch/
+.geminiignore
+.ignore
+
+# Design references and external sample dumps
+stitch_flux_desktop_design_system/
+stitch_screens/
+Новый дизайн/
+zapret-discord-youtube-1.10.3 (новый пример)/
