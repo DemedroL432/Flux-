@@ -16,6 +16,30 @@ export namespace dpi {
 	        this.enabled = source["enabled"];
 	    }
 	}
+	export class DpiListContent {
+	    name: string;
+	    path: string;
+	    entries: string[];
+	    total: number;
+	    customized: boolean;
+	    tooLarge: boolean;
+	    description: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DpiListContent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.entries = source["entries"];
+	        this.total = source["total"];
+	        this.customized = source["customized"];
+	        this.tooLarge = source["tooLarge"];
+	        this.description = source["description"];
+	    }
+	}
 
 }
 
@@ -229,12 +253,43 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class RouteDecision {
+	    query: string;
+	    normalized: string;
+	    kind: string;
+	    target: string;
+	    source: string;
+	    ruleLabel: string;
+	    final: boolean;
+	    note: string;
+	    dpiOn: boolean;
+	    proxyOn: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RouteDecision(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.query = source["query"];
+	        this.normalized = source["normalized"];
+	        this.kind = source["kind"];
+	        this.target = source["target"];
+	        this.source = source["source"];
+	        this.ruleLabel = source["ruleLabel"];
+	        this.final = source["final"];
+	        this.note = source["note"];
+	        this.dpiOn = source["dpiOn"];
+	        this.proxyOn = source["proxyOn"];
+	    }
+	}
 	export class RoutingSplitEntry {
 	    pattern: string;
 	    target: string;
 	    system: boolean;
 	    label?: string;
 	    source: string;
+	    userIndex: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RoutingSplitEntry(source);
@@ -247,6 +302,7 @@ export namespace main {
 	        this.system = source["system"];
 	        this.label = source["label"];
 	        this.source = source["source"];
+	        this.userIndex = source["userIndex"];
 	    }
 	}
 	export class ServiceHealth {
@@ -287,11 +343,66 @@ export namespace main {
 	        this.dpiConnectivityCheckedUnix = source["dpiConnectivityCheckedUnix"];
 	    }
 	}
+	export class SubscriptionPreview {
+	    ok: boolean;
+	    url: string;
+	    format: string;
+	    providerLabel: string;
+	    name: string;
+	    total: number;
+	    vless: number;
+	    vmess: number;
+	    trojan: number;
+	    shadowsocks: number;
+	    hysteria2: number;
+	    hysteria: number;
+	    tuic: number;
+	    anytls: number;
+	    socks: number;
+	    http: number;
+	    wireguard: number;
+	    other: number;
+	    expiresUnix: number;
+	    totalBytes: number;
+	    usedBytes: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.url = source["url"];
+	        this.format = source["format"];
+	        this.providerLabel = source["providerLabel"];
+	        this.name = source["name"];
+	        this.total = source["total"];
+	        this.vless = source["vless"];
+	        this.vmess = source["vmess"];
+	        this.trojan = source["trojan"];
+	        this.shadowsocks = source["shadowsocks"];
+	        this.hysteria2 = source["hysteria2"];
+	        this.hysteria = source["hysteria"];
+	        this.tuic = source["tuic"];
+	        this.anytls = source["anytls"];
+	        this.socks = source["socks"];
+	        this.http = source["http"];
+	        this.wireguard = source["wireguard"];
+	        this.other = source["other"];
+	        this.expiresUnix = source["expiresUnix"];
+	        this.totalBytes = source["totalBytes"];
+	        this.usedBytes = source["usedBytes"];
+	        this.error = source["error"];
+	    }
+	}
 	export class UIServer {
 	    id: string;
 	    name: string;
 	    host: string;
 	    port: string;
+	    protocol: string;
 	    source: string;
 	    fromSubscription: boolean;
 	    lastCheckOk: boolean;
@@ -310,6 +421,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.host = source["host"];
 	        this.port = source["port"];
+	        this.protocol = source["protocol"];
 	        this.source = source["source"];
 	        this.fromSubscription = source["fromSubscription"];
 	        this.lastCheckOk = source["lastCheckOk"];

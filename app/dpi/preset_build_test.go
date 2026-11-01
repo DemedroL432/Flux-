@@ -36,3 +36,26 @@ func TestDefaultGeneratedTuningCandidatesNonEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceDiscordDesync(t *testing.T) {
+	in := []byte(`--filter-tcp=443
+--hostlist-domains=updates.discord.com,gateway.discord.gg
+--out-range=-d8
+--lua-desync=old_method:1
+
+--new
+
+--filter-tcp=80,443
+--hostlist=lists/discord.txt
+--out-range=-d8
+--lua-desync=old_method:2
+`)
+	newDesync := "--lua-desync=new_test_method:123"
+	out := string(ReplaceDiscordDesync(in, newDesync))
+	if strings.Contains(out, "old_method") {
+		t.Fatalf("expected old_method removed, got:\n%s", out)
+	}
+	if !strings.Contains(out, "new_test_method:123") {
+		t.Fatalf("expected new_test_method present, got:\n%s", out)
+	}
+}

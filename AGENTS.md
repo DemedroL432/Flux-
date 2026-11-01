@@ -43,3 +43,15 @@ Response expectations
 - For implementation, report what changed, which files were touched, what was verified, and remaining caveats.
 - For diagnosis, separate confirmed findings from hypotheses. Avoid broad speculative investigation without evidence.
 - Ask for clarification only when missing information materially affects architecture, safety, data loss or expected behavior.
+Versioning and GitHub environment
+- Current target version: 0.7.5
+- GitHub repository: DemedroL432/Flux- (https://github.com/DemedroL432/Flux-.git)
+- GitHub user: DemedroL432 (75789021+DemedroL432@users.noreply.github.com)
+- Personal Access Token is available via user environment variables: $env:GITHUB_TOKEN and $env:GH_TOKEN.
+- When incrementing versions, always synchronize all 5 version declarations:
+  1. build.ps1 ($Version default)
+  2. scripts/build_windows.ps1 ($Version default)
+  3. ui/PulseShieldDesktop/main.go (var Version)
+  4. ui/PulseShieldDesktop/wails.json (productVersion)
+  5. ui/PulseShieldDesktop/frontend/package.json (version)
+- Do not overwrite or delete legacy design system files without explicit confirmation; keep backup_v0.7.3_ui/ intact.

@@ -73,17 +73,23 @@ func (r *Runner) Start(profile models.DPIProfile, cfg *models.AppConfig) error {
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	_, _ = fmt.Fprintf(logFile, "[%s] DPI запуск: %s (профиль: %s)\n[%s] Рабочий каталог: %s, аргументы: %s\n",
+		time.Now().Format("2006-01-02 15:04:05"), bin, profile.Name,
+		time.Now().Format("2006-01-02 15:04:05"), dir, strings.Join(args, " "))
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
+		_, _ = fmt.Fprintf(logFile, "[%s] Ошибка старта DPI: %v\n", time.Now().Format("2006-01-02 15:04:05"), err)
 		return fmt.Errorf("запуск DPI не удался (права администратора, антивирус или нет файла): %w", err)
 	}
 	time.Sleep(280 * time.Millisecond)
 	if cmd.Process != nil && !verifyProcessAlive(cmd.Process.Pid) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
+		_, _ = fmt.Fprintf(logFile, "[%s] Процесс DPI сразу завершился (PID: %d)\n", time.Now().Format("2006-01-02 15:04:05"), cmd.Process.Pid)
 		return fmt.Errorf("процесс DPI сразу завершился — откройте лог: %s", logPath)
 	}
+	_, _ = fmt.Fprintf(logFile, "[%s] DPI успешно запущен (PID: %d)\n", time.Now().Format("2006-01-02 15:04:05"), cmd.Process.Pid)
 	r.cmd = cmd
 	r.activeTool = profile.Tool
 	go r.reap(cmd)
@@ -93,12 +99,23 @@ func (r *Runner) Start(profile models.DPIProfile, cfg *models.AppConfig) error {
 func (r *Runner) reap(cmd *exec.Cmd) {
 	err := cmd.Wait()
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	lastLog := r.lastLog
 	if r.cmd == cmd {
 		r.cmd = nil
 		r.activeTool = ""
 	}
-	_ = err
+	r.mu.Unlock()
+
+	if lastLog != "" {
+		if f, oErr := os.OpenFile(lastLog, os.O_APPEND|os.O_WRONLY, 0644); oErr == nil {
+			defer f.Close()
+			if err != nil {
+				_, _ = fmt.Fprintf(f, "[%s] DPI процесс завершился с кодом/ошибкой: %v\n", time.Now().Format("2006-01-02 15:04:05"), err)
+			} else {
+				_, _ = fmt.Fprintf(f, "[%s] DPI процесс штатно остановлен\n", time.Now().Format("2006-01-02 15:04:05"))
+			}
+		}
+	}
 }
 
 // CleanupStrayProcesses kills stray winws.exe and winws2.exe processes,

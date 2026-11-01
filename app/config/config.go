@@ -112,7 +112,7 @@ func DefaultConfig() models.AppConfig {
 		DPIProfiles:       []models.DPIProfile{},
 		ActiveDPIProfile:  PreferredZapretPresetName,
 		RoutingProfiles:   builtinRoutingPresets(),
-		RoutingProfile:    "default",
+		RoutingProfile:    RoutingModeManual,
 		RoutingBuiltinRev: CurrentRoutingBuiltinRev,
 	}
 }

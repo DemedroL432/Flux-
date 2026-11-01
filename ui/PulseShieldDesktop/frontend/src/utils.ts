@@ -8,39 +8,34 @@ export const ACCENT_PRESETS = ["#78f65c", "#58d8ff", "#a78bfa", "#fb7185", "#fbb
 
 export const ONBOARDING_KEY = "pulseshield.onboardingDone";
 
-/** Подписи встроенных профилей (имя в конфиге без изменений). */
+/** Подписи двух режимов маршрутизации (имя в конфиге без изменений). */
 export const ROUTING_PROFILE_LABELS: Record<string, string> = {
-  default: "Только прокси — весь трафик через VLESS",
-  "selective-proxy": "Выборочный VPN — прокси только для списка доменов",
-  "gaming-friendly": "Игры — лаунчеры напрямую, медиа через прокси",
-  "rf-smart-split": "РФ: умный сплит — DPI-путь для сервисов, без лишнего VLESS",
+  "full-proxy": "Полный прокси — весь трафик через туннель, кроме локального и РФ",
+  manual: "Прокси с ручными правилами — в туннель только то, что вы добавили",
 };
 
-export const BUILTIN_ROUTING_KEYS = ["default", "selective-proxy", "gaming-friendly", "rf-smart-split"] as const;
+export const BUILTIN_ROUTING_KEYS = ["full-proxy", "manual"] as const;
 
 export const ROUTING_MODE_CARDS: { key: (typeof BUILTIN_ROUTING_KEYS)[number]; icon: string; blurb: string }[] = [
-  { key: "default", icon: "◎", blurb: "Весь трафик через VLESS." },
-  { key: "selective-proxy", icon: "⊕", blurb: "Только список сайтов в VPN." },
-  { key: "gaming-friendly", icon: "▶", blurb: "Игры напрямую, медиа в VPN." },
-  { key: "rf-smart-split", icon: "⊞", blurb: "РФ: DPI без лишнего VLESS." },
+  { key: "full-proxy", icon: "◎", blurb: "Весь трафик через туннель." },
+  { key: "manual", icon: "⊕", blurb: "В туннель — только ваши правила." },
 ];
 
 /** Примеры «что через VPN / что напрямую» для подсказок (совпадает с логикой пресетов в ядре). */
 export const ROUTING_TRAFFIC_CHIPS: Record<string, string[]> = {
-  default: ["Весь исходящий трафик → VLESS"],
-  "selective-proxy": ["Через прокси: YouTube, Discord, соцсети, ChatGPT…", "Напрямую: остальное"],
-  "gaming-friendly": ["Напрямую: Steam, Epic, Battle.net, CS2…", "Через прокси: медиа из списка"],
-  "rf-smart-split": [
-    "Напрямую / DPI: YouTube, Google, Discord, Telegram, .ru…",
-    "Через VLESS: только если добавите vpn-preferred в профиль",
+  "full-proxy": [
+    "Через туннель: весь интернет-трафик",
+    "Напрямую: локальная сеть и сайты РФ",
+  ],
+  manual: [
+    "Через туннель: только добавленные вами сайты и процессы",
+    "Напрямую: всё остальное, включая сайты РФ",
   ],
 };
 
 export const ROUTING_MODE_SHORT: Record<string, string> = {
-  default: "Полный прокси",
-  "selective-proxy": "Выборочный VPN",
-  "gaming-friendly": "Игры + медиа",
-  "rf-smart-split": "Умный сплит РФ",
+  "full-proxy": "Полный прокси",
+  manual: "Ручные правила",
 };
 
 export function formatBps(bps: number): string {
@@ -279,8 +274,11 @@ export function routingPresetTooltip(profileKey: string): string {
     lines.push("", "Ориентир по трафику:");
     chips.forEach((c) => lines.push(`• ${c}`));
   }
-  if (profileKey === "rf-smart-split") {
-    lines.push("", "РФ smart-split: сервисы из списка — через DPI; смотрите также финальный outbound профиля.");
+  if (profileKey === "manual") {
+    lines.push("", "Ручной режим: через туннель идёт только то, что вы добавили правилами, остальное напрямую.");
+  }
+  if (profileKey === "full-proxy") {
+    lines.push("", "Полный прокси: всё уходит в туннель, кроме локальной сети и сайтов РФ.");
   }
   if (profileKey && !(BUILTIN_ROUTING_KEYS as readonly string[]).includes(profileKey as (typeof BUILTIN_ROUTING_KEYS)[number])) {
     lines.push("", `Профиль «${profileKey}» пользовательский — полное редактирование в разделе «Продвинутые».`);

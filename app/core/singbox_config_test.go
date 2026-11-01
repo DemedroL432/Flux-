@@ -151,6 +151,28 @@ func TestRouteFinalOutbound_FromProfileFinal(t *testing.T) {
 	}
 }
 
+// Профиль есть, но final пустой или неизвестный — решение принимает proxyMode.
+// Этот случай читает UI-проверка маршрута, поэтому он должен быть зафиксирован.
+func TestRouteFinalOutbound_EmptyOrUnknownFinalFallsBackToProxyMode(t *testing.T) {
+	for _, final := range []string{"", "   ", "whatever"} {
+		cfg := models.AppConfig{
+			ProxyMode:      models.ProxyModeDirect,
+			RoutingProfile: "p",
+			RoutingProfiles: []models.RoutingProfile{
+				{Name: "p", Final: final},
+			},
+		}
+		if got := routeFinalOutbound(cfg); got != "direct" {
+			t.Errorf("final=%q, proxyMode=direct_with_rules: got %q, want direct", final, got)
+		}
+
+		cfg.ProxyMode = models.ProxyModeSystem
+		if got := routeFinalOutbound(cfg); got != "proxy" {
+			t.Errorf("final=%q, proxyMode=system_proxy: got %q, want proxy", final, got)
+		}
+	}
+}
+
 func BenchmarkManagerApply_ConfigReuse(b *testing.B) {
 	m := NewManager(NewAdapter(""))
 	cfg := models.AppConfig{

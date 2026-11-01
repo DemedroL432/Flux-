@@ -6,6 +6,10 @@ export function ActivateLicense(arg1) {
   return window['go']['main']['App']['ActivateLicense'](arg1);
 }
 
+export function AddDpiListEntry(arg1, arg2) {
+  return window['go']['main']['App']['AddDpiListEntry'](arg1, arg2);
+}
+
 export function AddUserRoutingRule(arg1, arg2) {
   return window['go']['main']['App']['AddUserRoutingRule'](arg1, arg2);
 }
@@ -50,6 +54,10 @@ export function ClearLogFiles() {
   return window['go']['main']['App']['ClearLogFiles']();
 }
 
+export function CloseToTray() {
+  return window['go']['main']['App']['CloseToTray']();
+}
+
 export function ClearSubscription() {
   return window['go']['main']['App']['ClearSubscription']();
 }
@@ -72,6 +80,10 @@ export function GetAppVersion() {
 
 export function GetAvailableDpiLists() {
   return window['go']['main']['App']['GetAvailableDpiLists']();
+}
+
+export function GetDpiListContent(arg1) {
+  return window['go']['main']['App']['GetDpiListContent'](arg1);
 }
 
 export function GetLogsState() {
@@ -114,12 +126,24 @@ export function ImportServerFromClipboard() {
   return window['go']['main']['App']['ImportServerFromClipboard']();
 }
 
+export function ImportServersFromText(arg1) {
+  return window['go']['main']['App']['ImportServersFromText'](arg1);
+}
+
 export function OpenLogsFolder() {
   return window['go']['main']['App']['OpenLogsFolder']();
 }
 
 export function OpenRoutingJSON() {
   return window['go']['main']['App']['OpenRoutingJSON']();
+}
+
+export function ParseServerLink(arg1) {
+  return window['go']['main']['App']['ParseServerLink'](arg1);
+}
+
+export function PreviewSubscription(arg1) {
+  return window['go']['main']['App']['PreviewSubscription'](arg1);
 }
 
 export function ProgramGuide() {
@@ -134,12 +158,20 @@ export function RelaunchAsAdmin() {
   return window['go']['main']['App']['RelaunchAsAdmin']();
 }
 
+export function RemoveDpiListEntry(arg1, arg2) {
+  return window['go']['main']['App']['RemoveDpiListEntry'](arg1, arg2);
+}
+
 export function RemoveServer(arg1) {
   return window['go']['main']['App']['RemoveServer'](arg1);
 }
 
 export function RemoveUserRoutingRule(arg1) {
   return window['go']['main']['App']['RemoveUserRoutingRule'](arg1);
+}
+
+export function RemoveUserRoutingRuleAt(arg1) {
+  return window['go']['main']['App']['RemoveUserRoutingRuleAt'](arg1);
 }
 
 export function RequestQuit() {
@@ -188,6 +220,10 @@ export function SetDPIEnabled(arg1) {
 
 export function SetDnsSettings(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetDnsSettings'](arg1, arg2, arg3);
+}
+
+export function SetDpiListContent(arg1, arg2) {
+  return window['go']['main']['App']['SetDpiListContent'](arg1, arg2);
 }
 
 export function SetLicenseAPIBase(arg1) {
@@ -248,4 +284,8 @@ export function ToggleDpiList(arg1, arg2) {
 
 export function UseCachedSubscription() {
   return window['go']['main']['App']['UseCachedSubscription']();
+}
+
+export function VerifyRouteTarget(arg1) {
+  return window['go']['main']['App']['VerifyRouteTarget'](arg1);
 }

@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at link time: -ldflags "-X main.Version=1.2.3" (release). Default matches desktop line 0.7.x.
-var Version = "0.7.4"
+var Version = "0.7.5"
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -58,6 +58,7 @@ func main() {
 		OnStartup: app.startup,
 		// Нельзя вызывать Hide синхронно из этого колбэка — WebView2 зависает/падает.
 		// Откладываем скрытие окна после возврата из обработчика закрытия.
+		// При forceQuit (крестик / «Выход» в трее) возвращаем false — это настоящий выход.
 		OnBeforeClose: func(ctx context.Context) (prevent bool) {
 			if app.ShouldExitOnClose() {
 				return false

@@ -10,7 +10,7 @@ import (
 func sampleRoutingProfiles() []models.RoutingProfile {
 	return []models.RoutingProfile{
 		{
-			Name:  "default",
+			Name:  "full-proxy",
 			Final: "proxy",
 			Rules: []models.RouteRule{
 				{Name: "local-direct", Domains: []string{"*.local", "localhost"}, Action: models.RouteDirect},
@@ -18,28 +18,13 @@ func sampleRoutingProfiles() []models.RoutingProfile {
 			},
 		},
 		{
-			Name:  "rf-smart-split",
+			Name:  "manual",
 			Final: "direct",
 			Rules: []models.RouteRule{
 				{Name: "local-direct", Domains: []string{"*.local", "localhost"}, Action: models.RouteDirect},
 				{Name: "ru-tld-direct", DomainSuffixes: []string{"ru", "xn--p1ai", "su"}, Action: models.RouteDirect},
 				{Name: "proxy-only-messengers", DomainSuffixes: []string{"t.me", "telegram.org"}, Action: models.RouteProxy},
 				{Name: "dpi-direct-services", DomainSuffixes: []string{"youtube.com", "googlevideo.com"}, Action: models.RouteDPIBypass},
-			},
-		},
-		{
-			Name:  "all-direct",
-			Final: "direct",
-			Rules: []models.RouteRule{
-				{Name: "local-direct", Domains: []string{"*.local", "localhost"}, Action: models.RouteDirect},
-				{Name: "all-direct-services", DomainSuffixes: []string{"youtube.com", "discord.com"}, Action: models.RouteDirect},
-			},
-		},
-		{
-			Name:  "gaming-friendly",
-			Final: "direct",
-			Rules: []models.RouteRule{
-				{Name: "launchers-direct", Processes: []string{"cs2.exe", "dota2.exe"}, Action: models.RouteDirect},
 			},
 		},
 	}
@@ -50,19 +35,22 @@ func TestResolveRoutingProfileAlias(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"", "rf-smart-split"},
-		{"   ", "rf-smart-split"},
-		{"bypass-russia", "rf-smart-split"},
-		{"BYPASS-RUSSIA", "rf-smart-split"},
-		{"  bypass-russia  ", "rf-smart-split"},
-		{"all-proxy", "default"},
-		{"ALL-PROXY", "default"},
-		{"  All-Proxy  ", "default"},
-		{"all-direct", "all-direct"},
-		{"ALL-DIRECT", "all-direct"},
-		{"rf-smart-split", "rf-smart-split"},
-		{"default", "default"},
-		{"gaming-friendly", "gaming-friendly"},
+		{"", "full-proxy"},
+		{"   ", "full-proxy"},
+		{"bypass-russia", "manual"},
+		{"BYPASS-RUSSIA", "manual"},
+		{"  bypass-russia  ", "manual"},
+		{"all-proxy", "full-proxy"},
+		{"ALL-PROXY", "full-proxy"},
+		{"  All-Proxy  ", "full-proxy"},
+		{"all-direct", "manual"},
+		{"ALL-DIRECT", "manual"},
+		{"rf-smart-split", "manual"},
+		{"selective-proxy", "manual"},
+		{"default", "full-proxy"},
+		{"full-proxy", "full-proxy"},
+		{"manual", "manual"},
+		{"gaming-friendly", "manual"},
 		{"unknown", "unknown"},
 		{"custom-profile", "custom-profile"},
 	}
@@ -90,65 +78,65 @@ func TestActiveRoutingProfile_VariousInputs(t *testing.T) {
 		minRules      int
 	}{
 		{
-			name:          "empty string resolves to rf-smart-split",
+			name:          "empty string resolves to full-proxy",
 			inputProfile:  "",
-			expectedName:  "rf-smart-split",
-			expectedFinal: "direct",
-			expectOK:      true,
-			minRules:      4,
-		},
-		{
-			name:          "bypass-russia resolves to rf-smart-split",
-			inputProfile:  "bypass-russia",
-			expectedName:  "rf-smart-split",
-			expectedFinal: "direct",
-			expectOK:      true,
-			minRules:      4,
-		},
-		{
-			name:          "all-proxy resolves to default",
-			inputProfile:  "all-proxy",
-			expectedName:  "default",
+			expectedName:  "full-proxy",
 			expectedFinal: "proxy",
 			expectOK:      true,
 			minRules:      2,
 		},
 		{
-			name:          "all-direct resolves to all-direct",
-			inputProfile:  "all-direct",
-			expectedName:  "all-direct",
+			name:          "bypass-russia resolves to manual",
+			inputProfile:  "bypass-russia",
+			expectedName:  "manual",
 			expectedFinal: "direct",
 			expectOK:      true,
 			minRules:      2,
 		},
 		{
-			name:          "rf-smart-split direct match",
-			inputProfile:  "rf-smart-split",
-			expectedName:  "rf-smart-split",
+			name:          "all-proxy resolves to full-proxy",
+			inputProfile:  "all-proxy",
+			expectedName:  "full-proxy",
+			expectedFinal: "proxy",
+			expectOK:      true,
+			minRules:      2,
+		},
+		{
+			name:          "all-direct resolves to manual",
+			inputProfile:  "all-direct",
+			expectedName:  "manual",
 			expectedFinal: "direct",
 			expectOK:      true,
-			minRules:      4,
+			minRules:      2,
+		},
+		{
+			name:          "rf-smart-split resolves to manual",
+			inputProfile:  "rf-smart-split",
+			expectedName:  "manual",
+			expectedFinal: "direct",
+			expectOK:      true,
+			minRules:      2,
 		},
 		{
 			name:          "default direct match",
 			inputProfile:  "default",
-			expectedName:  "default",
+			expectedName:  "full-proxy",
 			expectedFinal: "proxy",
 			expectOK:      true,
 			minRules:      2,
 		},
 		{
-			name:          "gaming-friendly direct match",
+			name:          "gaming-friendly resolves to manual",
 			inputProfile:  "gaming-friendly",
-			expectedName:  "gaming-friendly",
+			expectedName:  "manual",
 			expectedFinal: "direct",
 			expectOK:      true,
-			minRules:      1,
+			minRules:      2,
 		},
 		{
-			name:          "unknown profile falls back to default/first",
+			name:          "unknown profile falls back to first profile",
 			inputProfile:  "unknown",
-			expectedName:  "default",
+			expectedName:  "full-proxy",
 			expectedFinal: "proxy",
 			expectOK:      true,
 			minRules:      2,
@@ -191,14 +179,14 @@ func TestActiveRoutingProfile_BypassRussiaDoesNotFallBackToEmptyOrBrokenRules(t 
 	if !ok {
 		t.Fatal("expected ok == true for bypass-russia")
 	}
-	if rp.Name != "rf-smart-split" {
-		t.Fatalf("expected resolved name 'rf-smart-split', got %q", rp.Name)
+	if rp.Name != "manual" {
+		t.Fatalf("expected resolved name 'manual', got %q", rp.Name)
 	}
 	if len(rp.Rules) == 0 {
-		t.Fatal("expected non-empty rules for rf-smart-split, got 0 rules")
+		t.Fatal("expected non-empty rules for manual mode, got 0 rules")
 	}
 	if rp.Final != "direct" {
-		t.Fatalf("expected Final == 'direct' for rf-smart-split, got %q", rp.Final)
+		t.Fatalf("expected Final == 'direct' for manual mode, got %q", rp.Final)
 	}
 
 	// Verify specific rule contents exist and are not broken
@@ -227,6 +215,7 @@ func TestActiveRoutingProfile_BypassRussiaDoesNotFallBackToEmptyOrBrokenRules(t 
 }
 
 func TestActiveRoutingProfile_AllDirect_FinalOutboundDirect(t *testing.T) {
+	// «all-direct» — старое имя; теперь это режим manual с final: direct.
 	profiles := sampleRoutingProfiles()
 	cfg := models.AppConfig{
 		RoutingProfile:  "all-direct",
@@ -237,14 +226,14 @@ func TestActiveRoutingProfile_AllDirect_FinalOutboundDirect(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok == true for all-direct")
 	}
-	if rp.Name != "all-direct" {
-		t.Fatalf("expected Name == 'all-direct', got %q", rp.Name)
+	if rp.Name != "manual" {
+		t.Fatalf("expected Name == 'manual', got %q", rp.Name)
 	}
 	if rp.Final != "direct" {
 		t.Fatalf("expected Final == 'direct', got %q", rp.Final)
 	}
 	if len(rp.Rules) == 0 {
-		t.Fatal("expected non-empty rules for all-direct")
+		t.Fatal("expected non-empty rules for manual mode")
 	}
 }
 

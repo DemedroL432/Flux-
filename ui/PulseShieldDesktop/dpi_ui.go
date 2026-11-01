@@ -74,3 +74,57 @@ func (a *App) ToggleDpiList(name string, enabled bool) error {
 	}
 	return err
 }
+
+// GetDpiListContent возвращает содержимое списка доменов для редактора.
+func (a *App) GetDpiListContent(name string) (*dpi.DpiListContent, error) {
+	return dpi.ReadDpiListContent(name)
+}
+
+// SetDpiListContent перезаписывает список доменов целиком.
+// Если DPI работает, перезапускаем его, чтобы применить новые фильтры.
+func (a *App) SetDpiListContent(name string, entries []string) error {
+	if err := dpi.WriteDpiListContent(name, entries); err != nil {
+		return err
+	}
+	a.invalidateRoutingDpiPanelCaches()
+	a.restartDpiIfRunning()
+	return nil
+}
+
+// AddDpiListEntry добавляет один домен в список.
+func (a *App) AddDpiListEntry(name string, entry string) (bool, error) {
+	added, err := dpi.AddDpiListEntry(name, entry)
+	if err != nil {
+		return false, err
+	}
+	if added {
+		a.invalidateRoutingDpiPanelCaches()
+		a.restartDpiIfRunning()
+	}
+	return added, nil
+}
+
+// RemoveDpiListEntry удаляет один домен из списка.
+func (a *App) RemoveDpiListEntry(name string, entry string) (bool, error) {
+	removed, err := dpi.RemoveDpiListEntry(name, entry)
+	if err != nil {
+		return false, err
+	}
+	if removed {
+		a.invalidateRoutingDpiPanelCaches()
+		a.restartDpiIfRunning()
+	}
+	return removed, nil
+}
+
+// restartDpiIfRunning перезапускает DPI в фоне, если он сейчас активен.
+func (a *App) restartDpiIfRunning() {
+	a.mu.Lock()
+	running := a.st != nil && a.st.Snapshot().DPIEnabled && a.dpiRunner != nil && a.dpiRunner.IsRunning()
+	a.mu.Unlock()
+	if running {
+		go func() {
+			_ = a.runApplySync(false, 0)
+		}()
+	}
+}

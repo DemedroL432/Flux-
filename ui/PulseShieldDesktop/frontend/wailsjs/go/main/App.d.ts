@@ -5,6 +5,8 @@ import {dpi} from '../models';
 
 export function ActivateLicense(arg1:string):Promise<void>;
 
+export function AddDpiListEntry(arg1:string,arg2:string):Promise<boolean>;
+
 export function AddUserRoutingRule(arg1:string,arg2:string):Promise<void>;
 
 export function AddVLESS(arg1:string):Promise<void>;
@@ -27,6 +29,8 @@ export function CheckForUpdates():Promise<string>;
 
 export function ClearLogFiles():Promise<void>;
 
+export function CloseToTray():Promise<void>;
+
 export function ClearSubscription():Promise<void>;
 
 export function CreateDiagnosticsBundle():Promise<string>;
@@ -38,6 +42,8 @@ export function GetActiveConnections():Promise<Array<main.ActiveConnectionSnapsh
 export function GetAppVersion():Promise<string>;
 
 export function GetAvailableDpiLists():Promise<Array<dpi.DpiList>>;
+
+export function GetDpiListContent(arg1:string):Promise<dpi.DpiListContent>;
 
 export function GetLogsState():Promise<main.LogsState>;
 
@@ -59,9 +65,15 @@ export function ImportDPIConfig():Promise<string>;
 
 export function ImportServerFromClipboard():Promise<void>;
 
+export function ImportServersFromText(arg1:string):Promise<number>;
+
 export function OpenLogsFolder():Promise<void>;
 
 export function OpenRoutingJSON():Promise<main.ImportedFile>;
+
+export function ParseServerLink(arg1:string):Promise<Record<string, string>>;
+
+export function PreviewSubscription(arg1:string):Promise<main.SubscriptionPreview>;
 
 export function ProgramGuide():Promise<string>;
 
@@ -69,9 +81,13 @@ export function RefreshSubscription():Promise<void>;
 
 export function RelaunchAsAdmin():Promise<void>;
 
+export function RemoveDpiListEntry(arg1:string,arg2:string):Promise<boolean>;
+
 export function RemoveServer(arg1:string):Promise<void>;
 
 export function RemoveUserRoutingRule(arg1:string):Promise<void>;
+
+export function RemoveUserRoutingRuleAt(arg1:number):Promise<void>;
 
 export function RequestQuit():Promise<void>;
 
@@ -96,6 +112,8 @@ export function SetActiveServer(arg1:string):Promise<void>;
 export function SetDPIEnabled(arg1:boolean):Promise<void>;
 
 export function SetDnsSettings(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetDpiListContent(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function SetLicenseAPIBase(arg1:string):Promise<void>;
 
@@ -126,3 +144,5 @@ export function StopAll():Promise<void>;
 export function ToggleDpiList(arg1:string,arg2:boolean):Promise<void>;
 
 export function UseCachedSubscription():Promise<void>;
+
+export function VerifyRouteTarget(arg1:string):Promise<main.RouteDecision>;

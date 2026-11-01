@@ -2,13 +2,77 @@ package config
 
 import "pulseshield/app/models"
 
-// builtinRoutingPresets — встроенные профили маршрутизации.
-// Классификация доменов: см. service_routing.go (ProxyOnly vs DPI-bypass).
+// РРјРµРЅР° РґРІСѓС… СЂРµР¶РёРјРѕРІ РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё. Р”СЂСѓРіРёС… РІСЃС‚СЂРѕРµРЅРЅС‹С… РїСЂРѕС„РёР»РµР№ РЅРµС‚:
+// РІСЃС‘, С‡С‚Рѕ СЂР°РЅСЊС€Рµ РЅР°Р·С‹РІР°Р»РѕСЃСЊ default/selective-proxy/gaming-friendly/rf-smart-split/all-direct,
+// СЃРІРѕСЂР°С‡РёРІР°РµС‚СЃСЏ РІ РѕРґРёРЅ РёР· СЌС‚РёС… РґРІСѓС… (СЃРј. MigrateRoutingProfileNames).
+const (
+	// RoutingModeFullProxy вЂ” В«РџРѕР»РЅС‹Р№ РїСЂРѕРєСЃРёВ»: РІСЃС‘, РєСЂРѕРјРµ Р»РѕРєР°Р»СЊРЅРѕРіРѕ Рё Р Р¤, РёРґС‘С‚ С‡РµСЂРµР· С‚СѓРЅРЅРµР»СЊ.
+	RoutingModeFullProxy = "full-proxy"
+	// RoutingModeManual вЂ” В«РџСЂРѕРєСЃРё СЃ СЂСѓС‡РЅС‹РјРё РїСЂР°РІРёР»Р°РјРёВ»: С‡РµСЂРµР· С‚СѓРЅРЅРµР»СЊ РёРґС‘С‚ С‚РѕР»СЊРєРѕ С‚Рѕ,
+	// С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґРѕР±Р°РІРёР» СЃР°Рј (РїР»СЋСЃ СЃРїРёСЃРѕРє РјРµРґРёР°-СЃРµСЂРІРёСЃРѕРІ); РѕСЃС‚Р°Р»СЊРЅРѕРµ РЅР°РїСЂСЏРјСѓСЋ.
+	RoutingModeManual = "manual"
+)
+
+// RoutingModeNames вЂ” РїРѕСЂСЏРґРѕРє РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ РІ UI.
+func RoutingModeNames() []string {
+	return []string{RoutingModeFullProxy, RoutingModeManual}
+}
+
+// IsKnownRoutingMode СЃРѕРѕР±С‰Р°РµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РёРјСЏ РѕРґРЅРёРј РёР· РґРІСѓС… РїРѕРґРґРµСЂР¶РёРІР°РµРјС‹С… СЂРµР¶РёРјРѕРІ.
+func IsKnownRoutingMode(name string) bool {
+	return name == RoutingModeFullProxy || name == RoutingModeManual
+}
+
+// legacyProfileToMode вЂ” СЃРѕРѕС‚РІРµС‚СЃС‚РІРёРµ СЃС‚Р°СЂС‹С… РІСЃС‚СЂРѕРµРЅРЅС‹С… РїСЂРѕС„РёР»РµР№ РЅРѕРІС‹Рј СЂРµР¶РёРјР°Рј.
+// РџСЂРѕС„РёР»Рё, РєРѕС‚РѕСЂС‹С… Р·РґРµСЃСЊ РЅРµС‚, СЃС‡РёС‚Р°СЋС‚СЃСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРјРё Рё РЅРµ РїРµСЂРµРёРјРµРЅРѕРІС‹РІР°СЋС‚СЃСЏ.
+var legacyProfileToMode = map[string]string{
+	"default":         RoutingModeFullProxy,
+	"all-direct":      RoutingModeManual,
+	"selective-proxy": RoutingModeManual,
+	"gaming-friendly": RoutingModeManual,
+	"rf-smart-split":  RoutingModeManual,
+	"bypass-russia":   RoutingModeManual,
+	"bypass-rf":       RoutingModeManual,
+}
+
+// MigrateRoutingProfileNames РїРµСЂРµРІРѕРґРёС‚ СЃРѕС…СЂР°РЅС‘РЅРЅС‹Рµ РёРјРµРЅР° СЃС‚Р°СЂС‹С… РІСЃС‚СЂРѕРµРЅРЅС‹С… РїСЂРѕС„РёР»РµР№
+// РЅР° РґРІР° Р°РєС‚СѓР°Р»СЊРЅС‹С… СЂРµР¶РёРјР°. Р’РѕР·РІСЂР°С‰Р°РµС‚ true, РµСЃР»Рё РёРјСЏ Р°РєС‚РёРІРЅРѕРіРѕ РїСЂРѕС„РёР»СЏ РёР·РјРµРЅРёР»РѕСЃСЊ,
+// Рё СЃРїРёСЃРѕРє РёРјС‘РЅ, РєРѕС‚РѕСЂС‹Рµ Р±С‹Р»Рё РїРµСЂРµРёРјРµРЅРѕРІР°РЅС‹ (РґР»СЏ РѕС‡РёСЃС‚РєРё РґСѓР±Р»РёРєР°С‚РѕРІ).
+func MigrateRoutingProfileNames(cfg *models.AppConfig) (activeChanged bool, renamed []string) {
+	if cfg == nil {
+		return false, nil
+	}
+	for i := range cfg.RoutingProfiles {
+		old := cfg.RoutingProfiles[i].Name
+		if mapped, ok := legacyProfileToMode[old]; ok {
+			if cfg.RoutingProfiles[i].Name != mapped {
+				cfg.RoutingProfiles[i].Name = mapped
+				renamed = append(renamed, old+"в†’"+mapped)
+			}
+		}
+	}
+	if mapped, ok := legacyProfileToMode[cfg.RoutingProfile]; ok {
+		if cfg.RoutingProfile != mapped {
+			cfg.RoutingProfile = mapped
+			activeChanged = true
+		}
+	}
+	return activeChanged, renamed
+}
+
+// builtinRoutingPresets РІРѕР·РІСЂР°С‰Р°РµС‚ РґРІР° СЂРµР¶РёРјР° РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё.
+//
+//	РџРѕР»РЅС‹Р№ РїСЂРѕРєСЃРё (final: proxy) вЂ” РІ С‚СѓРЅРЅРµР»СЊ СѓС…РѕРґРёС‚ РІСЃС‘, РєСЂРѕРјРµ Р»РѕРєР°Р»СЊРЅС‹С… Р°РґСЂРµСЃРѕРІ,
+//	РїСЂРёРІР°С‚РЅС‹С… СЃРµС‚РµР№ Рё СЂРѕСЃСЃРёР№СЃРєРёС… СЃРµСЂРІРёСЃРѕРІ (РѕРЅРё РёРґСѓС‚ РЅР°РїСЂСЏРјСѓСЋ, С‡С‚РѕР±С‹ РЅРµ РіРѕРЅСЏС‚СЊ
+//	Р»РёС€РЅРёР№ С‚СЂР°С„РёРє С‡РµСЂРµР· VLESS Рё РЅРµ Р»РѕРјР°С‚СЊ РґРѕСЃС‚СѓРї Рє Р Р¤-СЂРµСЃСѓСЂСЃР°Рј).
+//
+//	Р СѓС‡РЅС‹Рµ РїСЂР°РІРёР»Р° (final: direct) вЂ” РІ С‚СѓРЅРЅРµР»СЊ РёРґС‘С‚ С‚РѕР»СЊРєРѕ РјРµРґРёР°-СЃРїРёСЃРѕРє Рё С‚Рѕ,
+//	С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґРѕР±Р°РІРёР» СЃР°Рј; РѕСЃС‚Р°Р»СЊРЅРѕРµ РЅР°РїСЂСЏРјСѓСЋ.
+//
+// РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ РїСЂР°РІРёР»Р° (UserRoutingRules) РёРјРµСЋС‚ РїСЂРёРѕСЂРёС‚РµС‚ РЅР°Рґ РѕР±РѕРёРјРё СЂРµР¶РёРјР°РјРё,
+// РїРѕСЌС‚РѕРјСѓ РґРѕР±Р°РІР»СЏС‚СЊ СЃРІРѕРё РёСЃРєР»СЋС‡РµРЅРёСЏ РјРѕР¶РЅРѕ РІ Р»СЋР±РѕРј РёР· РЅРёС….
 func builtinRoutingPresets() []models.RoutingProfile {
 	localDomains := []string{"*.local", "localhost", "*.lan"}
-
-	// Редкие случаи, когда нужен именно выход через VLESS — допишите домены здесь.
-	var vpnPreferredDomains []string
 
 	localDirect := []models.RouteRule{
 		{Name: "local-direct", Domains: localDomains, Action: models.RouteDirect},
@@ -28,111 +92,40 @@ func builtinRoutingPresets() []models.RoutingProfile {
 		Domains: RuDirectDomains(),
 		Action:  models.RouteDirect,
 	}
-	gamingProcesses := []models.RouteRule{
-		{
-			Name: "launchers-direct",
-			Processes: []string{
-				"EpicGamesLauncher.exe", "RiotClientServices.exe",
-				"VALORANT.exe", "LeagueClient.exe", "Battle.net.exe", "Battle.net Launcher.exe", "cs2.exe", "dota2.exe",
-			},
-			Action: models.RouteDirect,
-		},
-	}
 
-	// Process-based proxy rules — до любых direct/xbox правил.
-	procBeforeXbox := ProcessProxyRules(nil)
-	gamingExtra := append([]models.RouteRule{}, procBeforeXbox...)
-	gamingExtra = append(gamingExtra, XboxDnsDirectRule())
-	gamingExtra = append(gamingExtra, gamingProcesses...)
-	gamingExtra = append(gamingExtra, models.RouteRule{
+	// РћР±С‰Р°СЏ Р±Р°Р·Р° РѕР±РѕРёС… СЂРµР¶РёРјРѕРІ: Р»РѕРєР°Р»СЊРЅРѕРµ, РїСЂРёРІР°С‚РЅС‹Рµ СЃРµС‚Рё Рё Р Р¤ вЂ” РІСЃРµРіРґР° РЅР°РїСЂСЏРјСѓСЋ.
+	base := append(append([]models.RouteRule{}, localDirect...), lanCIDR, ruDirect, ruServicesDirect)
+
+	// РџРѕР»РЅС‹Р№ РїСЂРѕРєСЃРё: Р±Р°Р·Р° + РїСЂР°РІРёР»Р° РїРѕ РїСЂРѕС†РµСЃСЃР°Рј (РѕРЅРё РІР°Р¶РЅРµРµ РґРѕРјРµРЅРѕРІ),
+	// РґР°Р»СЊС€Рµ РІСЃС‘ РѕСЃС‚Р°Р»СЊРЅРѕРµ СѓС…РѕРґРёС‚ РІ С‚СѓРЅРЅРµР»СЊ С‡РµСЂРµР· final: proxy.
+	fullProxyRules := append([]models.RouteRule{}, base...)
+	fullProxyRules = append(fullProxyRules, ProcessProxyRules(nil)...)
+
+	// Р СѓС‡РЅС‹Рµ РїСЂР°РІРёР»Р°: С‚Р° Р¶Рµ Р±Р°Р·Р° + РїСЂР°РІРёР»Р° РїРѕ РїСЂРѕС†РµСЃСЃР°Рј + РјРµРґРёР°-СЃРїРёСЃРѕРє,
+	// РєРѕС‚РѕСЂС‹Р№ СЂР°РЅСЊС€Рµ Р¶РёР» РІ selective-proxy. РћСЃС‚Р°Р»СЊРЅРѕРµ вЂ” РЅР°РїСЂСЏРјСѓСЋ.
+	manualRules := append([]models.RouteRule{}, base...)
+	manualRules = append(manualRules, ProcessProxyRules(nil)...)
+	manualRules = append(manualRules, models.RouteRule{
 		Name:           "media-social-via-proxy",
 		DomainSuffixes: SelectiveMediaDomainSuffixes(),
 		Action:         models.RouteProxy,
 	})
 
-	rfBase := append(append([]models.RouteRule{}, localDirect...), lanCIDR, ruDirect, ruServicesDirect)
-	rfBase = append(rfBase, procBeforeXbox...)
-	rfBase = append(rfBase, XboxDnsDirectRule())
-	rfSmartRules := append(rfBase, append(gamingProcesses,
-		models.RouteRule{
-			Name:           "proxy-only-messengers",
-			DomainSuffixes: ProxyOnlyMediaDomainSuffixes(),
-			Action:         models.RouteProxy,
-		},
-		models.RouteRule{
-			Name:           "dpi-direct-services",
-			DomainSuffixes: DPIBypassMediaDomainSuffixes(),
-			Action:         models.RouteDPIBypass,
-		},
-	)...)
-	if len(vpnPreferredDomains) > 0 {
-		rfSmartRules = append(rfSmartRules, models.RouteRule{
-			Name:    "vpn-preferred",
-			Domains: vpnPreferredDomains,
-			Action:  models.RouteProxy,
-		})
-	}
-
 	return []models.RoutingProfile{
 		{
-			Name: "default",
-			Rules: []models.RouteRule{
-				{Name: "local-direct", Domains: []string{"*.local", "localhost"}, Action: models.RouteDirect},
-				{Name: "ru-tld-direct", DomainSuffixes: RuDirectDomainSuffixes(), Action: models.RouteDirect},
-				{Name: "blocked-example", Domains: []string{"ads.example.com"}, Action: models.RouteBlock},
-				{Name: "default-proxy", Action: models.RouteProxy},
-			},
+			Name:  RoutingModeFullProxy,
+			Final: "proxy",
+			Rules: fullProxyRules,
 		},
 		{
-			Name:  "selective-proxy",
+			Name:  RoutingModeManual,
 			Final: "direct",
-			Rules: func() []models.RouteRule {
-				rules := append([]models.RouteRule{}, localDirect...)
-				rules = append(rules, ruDirect, ruServicesDirect)
-				rules = append(rules, ProcessProxyRules(nil)...)
-				rules = append(rules, XboxDnsDirectRule())
-				rules = append(rules, models.RouteRule{
-					Name:           "media-social-via-proxy",
-					DomainSuffixes: SelectiveMediaDomainSuffixes(),
-					Action:         models.RouteProxy,
-				})
-				return rules
-			}(),
-		},
-		{
-			Name:  "gaming-friendly",
-			Final: "direct",
-			Rules: append(append(append([]models.RouteRule{}, localDirect...), ruDirect, ruServicesDirect), gamingExtra...),
-		},
-		{
-			Name:  "rf-smart-split",
-			Final: "direct",
-			Rules: rfSmartRules,
-		},
-		{
-			Name:  "all-direct",
-			Final: "direct",
-			Rules: []models.RouteRule{
-				{Name: "local-direct", Domains: localDomains, Action: models.RouteDirect},
-				lanCIDR,
-				ruDirect,
-				ruServicesDirect,
-				{
-					Name:           "all-direct-services",
-					DomainSuffixes: append(append(ProxyOnlyMediaDomainSuffixes(), DPIBypassMediaDomainSuffixes()...), SelectiveMediaDomainSuffixes()...),
-					Action:         models.RouteDirect,
-				},
-				{
-					Name:           "bypass-proxy-media",
-					DomainSuffixes: []string{"netflix.com", "nflxvideo.net", "nflxso.net", "cdninstagram.com", "perplexity.ai", "mistral.ai", "replicate.com", "huggingface.co"},
-					Action:         models.RouteDirect,
-				},
-			},
+			Rules: manualRules,
 		},
 	}
 }
 
-// dedupeRoutingProfiles оставляет первый профиль с данным именем (чинит дубликаты в сохранённом JSON).
+// dedupeRoutingProfiles РѕСЃС‚Р°РІР»СЏРµС‚ РїРµСЂРІС‹Р№ РїСЂРѕС„РёР»СЊ СЃ РґР°РЅРЅС‹Рј РёРјРµРЅРµРј (С‡РёРЅРёС‚ РґСѓР±Р»РёРєР°С‚С‹ РІ СЃРѕС…СЂР°РЅС‘РЅРЅРѕРј JSON).
 func dedupeRoutingProfiles(cfg *models.AppConfig) bool {
 	if cfg == nil || len(cfg.RoutingProfiles) == 0 {
 		return false
@@ -155,23 +148,69 @@ func dedupeRoutingProfiles(cfg *models.AppConfig) bool {
 	return len(cfg.RoutingProfiles) < before
 }
 
-// MergeBuiltinRoutingProfiles добавляет встроенные профили, если профиля с таким именем ещё нет.
-// Возвращает true, если список профилей изменился (дубликаты убраны или добавлены встроенные).
+// MergeBuiltinRoutingProfiles РїСЂРёРІРѕРґРёС‚ РїСЂРѕС„РёР»Рё Рє РґРІСѓРј СЂРµР¶РёРјР°Рј:
+// РјРёРіСЂРёСЂСѓРµС‚ СЃС‚Р°СЂС‹Рµ РІСЃС‚СЂРѕРµРЅРЅС‹Рµ РёРјРµРЅР°, СѓРґР°Р»СЏРµС‚ РїСЂРѕС„РёР»Рё, РєРѕС‚РѕСЂС‹С… Р±РѕР»СЊС€Рµ РЅРµС‚,
+// Рё РіР°СЂР°РЅС‚РёСЂСѓРµС‚ РЅР°Р»РёС‡РёРµ РѕР±РѕРёС… СЂРµР¶РёРјРѕРІ.
+//
+// РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ РїСЂРѕС„РёР»Рё СЃ СЃРѕР±СЃС‚РІРµРЅРЅС‹РјРё РёРјРµРЅР°РјРё СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏ: РјС‹ РЅРµ СѓРґР°Р»СЏРµРј
+// С‚Рѕ, С‡С‚Рѕ С‡РµР»РѕРІРµРє СЃРѕР·РґР°Р» СЃР°Рј, вЂ” РёРЅР°С‡Рµ РµРіРѕ РїСЂР°РІРёР»Р° РјРѕР»С‡Р° РїСЂРѕРїР°РґСѓС‚.
 func MergeBuiltinRoutingProfiles(cfg *models.AppConfig) bool {
 	if cfg == nil {
 		return false
 	}
 	changed := dedupeRoutingProfiles(cfg)
-	have := make(map[string]struct{}, len(cfg.RoutingProfiles))
-	for _, p := range cfg.RoutingProfiles {
-		have[p.Name] = struct{}{}
+
+	// РЁР°Рі 1: СЃС‚Р°СЂС‹Рµ РІСЃС‚СЂРѕРµРЅРЅС‹Рµ РёРјРµРЅР° в†’ РЅРѕРІС‹Рµ СЂРµР¶РёРјС‹.
+	if activeChanged, _ := MigrateRoutingProfileNames(cfg); activeChanged {
+		changed = true
 	}
-	for _, p := range builtinRoutingPresets() {
-		if _, ok := have[p.Name]; !ok {
+	// РџРѕСЃР»Рµ РїРµСЂРµРёРјРµРЅРѕРІР°РЅРёСЏ РјРѕРіР»Рё РїРѕСЏРІРёС‚СЊСЃСЏ РґСѓР±Р»РёРєР°С‚С‹ (РЅР°РїСЂРёРјРµСЂ, Р±С‹Р»Рѕ Рё default, Рё rf-smart-split).
+	if dedupeRoutingProfiles(cfg) {
+		changed = true
+	}
+
+	// РЁР°Рі 2: РєР°РЅРѕРЅРёС‡РµСЃРєРёРµ РѕРїСЂРµРґРµР»РµРЅРёСЏ РґРІСѓС… СЂРµР¶РёРјРѕРІ.
+	// РџРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј РїСЂР°РІРёР»Р° Сѓ РїСЂРѕС„РёР»РµР№ СЃ СЌС‚РёРјРё РёРјРµРЅР°РјРё, С‡С‚РѕР±С‹ РїСЂР°РІРєРё РІСЃС‚СЂРѕРµРЅРЅРѕР№
+	// Р»РѕРіРёРєРё РґРѕРµР·Р¶Р°Р»Рё РґРѕ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… СѓСЃС‚Р°РЅРѕРІРѕРє.
+	builtins := builtinRoutingPresets()
+	byName := make(map[string]models.RoutingProfile, len(builtins))
+	for _, p := range builtins {
+		byName[p.Name] = p
+	}
+	kept := cfg.RoutingProfiles[:0]
+	for _, p := range cfg.RoutingProfiles {
+		if bp, ok := byName[p.Name]; ok {
+			kept = append(kept, bp)
+			delete(byName, p.Name)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	cfg.RoutingProfiles = kept
+	for _, name := range RoutingModeNames() {
+		if p, ok := byName[name]; ok {
 			cfg.RoutingProfiles = append(cfg.RoutingProfiles, p)
-			have[p.Name] = struct{}{}
 			changed = true
 		}
 	}
+
+	// РЁР°Рі 3: Р°РєС‚РёРІРЅС‹Р№ РїСЂРѕС„РёР»СЊ РґРѕР»Р¶РµРЅ СЃСѓС‰РµСЃС‚РІРѕРІР°С‚СЊ.
+	if !profileExists(cfg, cfg.RoutingProfile) {
+		cfg.RoutingProfile = RoutingModeManual
+		changed = true
+	}
 	return changed
+}
+
+// profileExists СЃРѕРѕР±С‰Р°РµС‚, РµСЃС‚СЊ Р»Рё РїСЂРѕС„РёР»СЊ СЃ С‚Р°РєРёРј РёРјРµРЅРµРј.
+func profileExists(cfg *models.AppConfig, name string) bool {
+	if cfg == nil || name == "" {
+		return false
+	}
+	for _, p := range cfg.RoutingProfiles {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
 }

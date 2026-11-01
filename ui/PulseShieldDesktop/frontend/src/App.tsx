@@ -1,88 +1,139 @@
-import { ConceptPages } from "./pages/ConceptPages";
-import './App.css';
-import './GraphiteTheme.css';
-import './ConceptTheme.css';
+import { useEffect, useRef, type ReactNode } from "react";
 import { AppProvider, useApp } from "./context/AppContext";
-import { DesktopSidebar } from "./components/DesktopSidebar";
-import { DesktopTopBar } from "./components/DesktopTopBar";
-import { GuidePage } from "./pages/GuidePage";
-import { LogsPage } from "./pages/LogsPage";
-import { OpenLogsFolder } from "../wailsjs/go/main/App";
+import { Icon } from "./icons";
+import { Rail, TopBar, Toasts, BusyBar, Sheet } from "./ui";
+import { NAV_ITEMS, SHEET_TITLES, type NavKey, type SheetKey } from "./types";
+import { ShieldScreen } from "./pages/ShieldScreen";
+import { RoutesScreen } from "./pages/RoutesScreen";
+import { TuningScreen } from "./pages/TuningScreen";
+import { MoreScreen } from "./pages/MoreScreen";
+import { ServersScreen } from "./pages/ServersScreen";
+import { TuneDpiSheet } from "./sheets/TuneDpiSheet";
+import {
+  ServerSheet, RuleSheet, VerifySheet, PortSheet, DnsSheet, ThemeSheet,
+  StatsSheet, LogsSheet, LicenseSheet, AboutSheet, UpdatesSheet,
+  GuideSheet, SpeedSheet, SubscriptionSheet,
+} from "./sheets";
 
-export function AppShell() {
-  const {
-    active, setActive,
-    busy,
-    toast, setToast,
-    globalBusy,
-  } = useApp();
+/** Нижний док с разделами и двумя независимыми переключателями движков. */
+function Dock() {
+  const { active, setActive, proxyEnabled, dpiEnabled, busy } = useApp();
+  const anyOn = proxyEnabled || dpiEnabled;
 
   return (
-    <div className="flux-desktop-layout" aria-busy={busy}>
-      <div className="flux-desktop-bg" />
-      <div className="flux-desktop-bg-overlay" />
+    <nav className={`dock${anyOn ? "" : " off"}${busy ? " busy" : ""}`} aria-label="Основная навигация">
+      {NAV_ITEMS.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className={`dock-btn${active === item.key ? " on" : ""}`}
+          onClick={() => setActive(item.key)}
+          aria-current={active === item.key ? "page" : undefined}
+        >
+          <Icon name={item.icon} />
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
 
-      {/* Desktop Left Sidebar */}
-      <DesktopSidebar />
+const SHEETS: Record<SheetKey, () => ReactNode> = {
+  server: () => <ServerSheet />,
+  rule: () => <RuleSheet />,
+  verify: () => <VerifySheet />,
+  "tune-dpi": () => <TuneDpiSheet />,
+  stats: () => <StatsSheet />,
+  logs: () => <LogsSheet />,
+  license: () => <LicenseSheet />,
+  about: () => <AboutSheet />,
+  updates: () => <UpdatesSheet />,
+  guide: () => <GuideSheet />,
+  speed: () => <SpeedSheet />,
+  dns: () => <DnsSheet />,
+  port: () => <PortSheet />,
+  subscription: () => <SubscriptionSheet />,
+  theme: () => <ThemeSheet />,
+};
 
-      {/* Main Desktop Area */}
-      <div className="flux-main-area">
-        {/* Top Window Bar with section title & window controls */}
-        <DesktopTopBar />
+function SheetLayer() {
+  const { sheet, closeSheet, openSheet } = useApp();
 
-        {/* Scrollable Content Container */}
-        <main className={`flux-content-scroll${active === "dashboard" ? " flux-content-dashboard" : ""}`}>
-          {/* Brand Hero Banner with corrected text */}
+  useEffect(() => {
+    const w = window as unknown as { __qaOpenSheet?: (k: SheetKey) => void };
+    w.__qaOpenSheet = openSheet;
+    return () => {
+      delete w.__qaOpenSheet;
+    };
+  }, [openSheet]);
 
+  if (!sheet) return null;
+  const body = SHEETS[sheet];
+  if (!body) return null;
 
-          {/* Busy and Toast notifications */}
-          {globalBusy ? (
-            <div className="app-inline-busy" role="status" aria-live="polite" style={{ marginBottom: 12 }}>
-              <span className="app-inline-busy-spin" aria-hidden />
-              <span className="app-inline-busy-text">{globalBusy}</span>
-            </div>
-          ) : null}
+  return (
+    <Sheet title={SHEET_TITLES[sheet]} onClose={closeSheet}>
+      {body()}
+    </Sheet>
+  );
+}
 
-          {toast ? (
-            <div
-              className={`toast-banner${toast.variant === "error" ? " toast-banner--error" : ""}`}
-              role="status"
-              aria-live={toast.variant === "error" ? "assertive" : "polite"}
-              style={{ marginBottom: 12 }}
-            >
-              <span className="toast-banner-text">{toast.text}</span>
-              {toast.openLogs ? (
-                <button type="button" className="btn btn-soft toast-banner-logs" onClick={() => void OpenLogsFolder().catch(e => setToast({text: String(e), variant: "error"}))}>
-                  Логи
-                </button>
-              ) : null}
-              <button type="button" className="toast-banner-close" aria-label="Закрыть" onClick={() => setToast(null)}>×</button>
-            </div>
-          ) : null}
+function Scene() {
+  const { active } = useApp();
+  const ref = useRef<HTMLDivElement>(null);
 
-          {/* Pages */}
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.classList.remove("in-right", "in-left");
+    void el.offsetWidth;
+    el.classList.add("in-right");
+  }, [active]);
 
+  const screens: Record<NavKey, ReactNode> = {
+    shield: <ShieldScreen />,
+    servers: <ServersScreen />,
+    routes: <RoutesScreen />,
+    tuning: <TuningScreen />,
+    more: <MoreScreen />,
+  };
 
-
-
-
-          {(active === "diagnostics" || active === "logs") && <div className="concept-actions" style={{marginBottom:16}}><button className="concept-button" onClick={() => setActive("diagnostics")}>Проверки</button><button className="concept-button" onClick={() => setActive("logs")}>Журнал</button></div>}
-          <ConceptPages />
-          <LogsPage />
-
-          <GuidePage />
-        </main>
+  return (
+    <div className="sys-body">
+      <div className="scene">
+        <div className="screen" ref={ref}>
+          {screens[active]}
+        </div>
       </div>
     </div>
   );
 }
 
-function App() {
+function Shell() {
+  const { busy, active } = useApp();
+  const title = NAV_ITEMS.find((n) => n.key === active)?.label || "Flux";
+
+  return (
+    <div className="win">
+      <Rail />
+      <div className="sys">
+        <TopBar title={title} />
+        <BusyBar show={busy} />
+        <Scene />
+        <Dock />
+        <SheetLayer />
+        <Toasts />
+      </div>
+    </div>
+  );
+}
+
+export function AppShell() {
   return (
     <AppProvider>
-      <AppShell />
+      <Shell />
     </AppProvider>
   );
 }
 
-export default App;
+export default AppShell;

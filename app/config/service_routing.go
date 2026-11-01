@@ -269,16 +269,10 @@ func ApplyRoutingBuiltinUpgrade(cfg *models.AppConfig) bool {
 	for _, p := range builtinRoutingPresets() {
 		byName[p.Name] = p
 	}
-	stock := []string{"default", "rf-smart-split", "selective-proxy", "gaming-friendly"}
+	// Синхронизируем правила у профилей двух актуальных режимов.
 	for i := range cfg.RoutingProfiles {
-		for _, n := range stock {
-			if cfg.RoutingProfiles[i].Name != n {
-				continue
-			}
-			if np, ok := byName[n]; ok {
-				cfg.RoutingProfiles[i] = np
-			}
-			break
+		if np, ok := byName[cfg.RoutingProfiles[i].Name]; ok {
+			cfg.RoutingProfiles[i] = np
 		}
 	}
 	cfg.RoutingBuiltinRev = CurrentRoutingBuiltinRev

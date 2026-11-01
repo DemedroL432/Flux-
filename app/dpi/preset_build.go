@@ -81,3 +81,34 @@ func SanitizeTuneFileName(id string) string {
 	}
 	return s
 }
+
+// ReplaceDiscordDesync подменяет desync-правило для секций discord/general на переданные строки.
+func ReplaceDiscordDesync(body []byte, desyncLines string) []byte {
+	cleanDesync := strings.TrimSpace(desyncLines)
+	if cleanDesync == "" {
+		return append([]byte(nil), body...)
+	}
+	s := strings.ReplaceAll(string(body), "\r\n", "\n")
+	sections := strings.Split(s, "\n--new\n")
+
+	for i, sec := range sections {
+		if strings.Contains(sec, "updates.discord.com") || strings.Contains(sec, "lists/discord.txt") {
+			lines := strings.Split(sec, "\n")
+			newLines := make([]string, 0, len(lines))
+			replaced := false
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "--lua-desync=") {
+					if !replaced {
+						newLines = append(newLines, cleanDesync)
+						replaced = true
+					}
+				} else {
+					newLines = append(newLines, line)
+				}
+			}
+			sections[i] = strings.Join(newLines, "\n")
+		}
+	}
+	return []byte(strings.Join(sections, "\n--new\n"))
+}

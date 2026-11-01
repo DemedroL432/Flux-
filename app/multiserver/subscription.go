@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -26,26 +25,55 @@ const userAgent = "PulseShield/0.6.0"
 
 // SubscriptionMeta — метаданные из ответа провайдера (часто в заголовке Subscription-Userinfo).
 type SubscriptionMeta struct {
-	ExpiresUnix     int64
-	ProviderLabel   string
-	UploadBytes     int64
-	DownloadBytes   int64
-	TotalBytes      int64
+	ExpiresUnix   int64
+	ProviderLabel string
+	UploadBytes   int64
+	DownloadBytes int64
+	TotalBytes    int64
+	// Format — распознанный формат тела подписки (plain-uri / base64 / clash-yaml / sing-box-json / v2ray-json).
+	Format string
+	// Name — имя профиля из заголовка Profile-Title (если провайдер его отдаёт).
+	Name string
 }
 
-var reUserinfoExpire = regexp.MustCompile(`(?i)\bexpire\s*=\s*(\d+)`)
+var (
+	reUserinfoExpire   = regexp.MustCompile(`(?i)\bexpire\s*=\s*(\d+)`)
+	reUserinfoUpload   = regexp.MustCompile(`(?i)\bupload\s*=\s*(\d+)`)
+	reUserinfoDownload = regexp.MustCompile(`(?i)\bdownload\s*=\s*(\d+)`)
+	reUserinfoTotal    = regexp.MustCompile(`(?i)\btotal\s*=\s*(\d+)`)
+)
 
 func parseSubscriptionUserinfoHeader(h string) (meta SubscriptionMeta) {
 	h = strings.TrimSpace(h)
 	if h == "" {
 		return meta
 	}
-	if m := reUserinfoExpire.FindStringSubmatch(h); len(m) == 2 {
-		if v, err := strconv.ParseInt(m[1], 10, 64); err == nil {
-			meta.ExpiresUnix = v
+	parseInto := func(re *regexp.Regexp, dst *int64) {
+		if m := re.FindStringSubmatch(h); len(m) == 2 {
+			if v, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+				*dst = v
+			}
 		}
 	}
+	parseInto(reUserinfoExpire, &meta.ExpiresUnix)
+	parseInto(reUserinfoUpload, &meta.UploadBytes)
+	parseInto(reUserinfoDownload, &meta.DownloadBytes)
+	parseInto(reUserinfoTotal, &meta.TotalBytes)
 	return meta
+}
+
+// decodeProfileTitle разбирает заголовок Profile-Title: "base64:...." или обычная строка.
+func decodeProfileTitle(h string) string {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(h), "base64:") {
+		if dec, ok := decodeBase64Loose(h[len("base64:"):]); ok {
+			return strings.TrimSpace(dec)
+		}
+	}
+	return h
 }
 
 func providerLabelFromURL(raw string) string {
@@ -60,7 +88,7 @@ func providerLabelFromURL(raw string) string {
 	return host
 }
 
-// FetchSubscription загружает список vless:// ссылок (без метаданных).
+// FetchSubscription загружает список прокси-ссылок (любой поддерживаемый формат) без метаданных.
 func FetchSubscription(rawURL string) ([]string, error) {
 	links, _, err := FetchSubscriptionWithMeta(rawURL)
 	return links, err
@@ -71,13 +99,39 @@ func FetchSubscriptionWithMeta(rawURL string) ([]string, SubscriptionMeta, error
 	return FetchSubscriptionWithProxy(rawURL, 8080)
 }
 
+// normalizeSubscriptionURL приводит пользовательский ввод к пригодному для запроса URL:
+// добавляет https:// если схема не указана и отбрасывает мусор вокруг адреса.
+func normalizeSubscriptionURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.Trim(s, "\"'`<>")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	if i := strings.IndexAny(s, " \t"); i > 0 {
+		s = s[:i]
+	}
+	if s == "" {
+		return ""
+	}
+	low := strings.ToLower(s)
+	if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+		return s
+	}
+	// Пользователь мог вставить "sub.example.com/api/v1/client/subscribe?token=..."
+	if !strings.Contains(s, "://") {
+		return "https://" + strings.TrimPrefix(s, "//")
+	}
+	return s
+}
+
 // FetchSubscriptionWithProxy пытается скачать подписку, обходя блокировки ТСПУ:
 // 1. Сначала пробует через локальный прокси 127.0.0.1:<proxyPort> (если туннель уже поднят).
 // 2. Пробует как оригинальный URL, так и HTTPS-апгрейд (на случай блокировки plaintext HTTP по DPI).
 // 3. Fallback — прямой запрос мимо прокси.
+//
+// Формат тела определяется автоматически (plain / base64 / Clash YAML / sing-box JSON / Xray JSON).
 func FetchSubscriptionWithProxy(rawURL string, localProxyPort int) ([]string, SubscriptionMeta, error) {
 	var meta SubscriptionMeta
-	subscriptionURL := strings.TrimSpace(rawURL)
+	subscriptionURL := normalizeSubscriptionURL(rawURL)
 	if subscriptionURL == "" {
 		return nil, meta, fmt.Errorf("subscription URL is empty")
 	}
@@ -118,6 +172,10 @@ func FetchSubscriptionWithProxy(rawURL string, localProxyPort int) ([]string, Su
 				continue
 			}
 			req.Header.Set("User-Agent", userAgent)
+			// Клиенты подписок (Happ / v2rayN / Clash) шлют эти заголовки — многие панели
+			// без них отдают 404 или HTML-страницу вместо конфига.
+			req.Header.Set("Accept", "*/*")
+			req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
 			resp, err := client.Do(req)
 			if err != nil {
 				lastErr = err
@@ -125,6 +183,7 @@ func FetchSubscriptionWithProxy(rawURL string, localProxyPort int) ([]string, Su
 			}
 			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 			hUserinfo := resp.Header.Get("Subscription-Userinfo")
+			hProfileTitle := resp.Header.Get("Profile-Title")
 			_ = resp.Body.Close()
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				lastErr = fmt.Errorf("subscription request failed: %s", resp.Status)
@@ -134,23 +193,36 @@ func FetchSubscriptionWithProxy(rawURL string, localProxyPort int) ([]string, Su
 				lastErr = readErr
 				continue
 			}
-			decoded, decErr := decodeSubscriptionPayload(string(body))
+			contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+			if strings.Contains(contentType, "text/html") && !looksLikeClashYAML(string(body)) {
+				// Панель отдала HTML-заглушку (страница входа/ошибки) — это не конфиг.
+				lastErr = fmt.Errorf("провайдер вернул HTML-страницу вместо подписки (проверьте ссылку)")
+				continue
+			}
+			links, fmtName, decErr := parseSubscriptionLinksWithFormat(string(body))
 			if decErr != nil {
 				lastErr = decErr
 				continue
 			}
-			lines := splitVlessLines(decoded)
-			if len(lines) == 0 {
+			if len(links) == 0 {
 				lastErr = fmt.Errorf("empty subscription payload")
 				continue
 			}
+			meta.Format = fmtName
 			if hUserinfo != "" {
 				m := parseSubscriptionUserinfoHeader(hUserinfo)
 				if m.ExpiresUnix != 0 {
 					meta.ExpiresUnix = m.ExpiresUnix
 				}
+				meta.UploadBytes = m.UploadBytes
+				meta.DownloadBytes = m.DownloadBytes
+				meta.TotalBytes = m.TotalBytes
 			}
-			return lines, meta, nil
+			if name := decodeProfileTitle(hProfileTitle); name != "" {
+				meta.Name = name
+				meta.ProviderLabel = name
+			}
+			return links, meta, nil
 		}
 	}
 	if lastErr == nil {
@@ -159,71 +231,10 @@ func FetchSubscriptionWithProxy(rawURL string, localProxyPort int) ([]string, Su
 	return nil, meta, lastErr
 }
 
+// ParseVlessString разбирает прокси-ссылку. Историческое имя сохранено ради совместимости,
+// но функция понимает все поддерживаемые протоколы (vless/vmess/trojan/ss/hysteria2/tuic/anytls/socks/http).
 func ParseVlessString(vlessURL string) (*models.VlessServer, error) {
-	raw := strings.TrimSpace(vlessURL)
-	low := strings.ToLower(raw)
-	proto := ""
-	switch {
-	case strings.HasPrefix(low, "vless://"):
-		proto = "vless"
-	case strings.HasPrefix(low, "trojan://"):
-		proto = "trojan"
-	case strings.HasPrefix(low, "hysteria2://"), strings.HasPrefix(low, "hy2://"):
-		proto = "hysteria2"
-	default:
-		return nil, fmt.Errorf("text is not a supported proxy link (vless/trojan/hysteria2)")
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return nil, err
-	}
-	host := strings.TrimSpace(u.Hostname())
-	if host == "" || host == "127.0.0.1" || host == "0.0.0.0" || host == "localhost" {
-		return nil, fmt.Errorf("proxy host is empty or dummy loopback")
-	}
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	if port == "1" || port == "0" {
-		return nil, fmt.Errorf("dummy info node port: %s", port)
-	}
-	uuid := u.User.Username()
-	if uuid == "00000000-0000-0000-0000-000000000000" {
-		return nil, fmt.Errorf("dummy info node uuid")
-	}
-	params := map[string]string{}
-	for k, vs := range u.Query() {
-		if len(vs) > 0 {
-			params[k] = vs[0]
-		}
-	}
-	params["_proto"] = proto
-	if proto != "vless" && params["proto"] == "" {
-		params["proto"] = proto
-	}
-	netType := strings.ToLower(strings.TrimSpace(params["type"]))
-	if netType == "xhttp" || netType == "splithttp" {
-		return nil, fmt.Errorf("unsupported Xray transport: %s", netType)
-	}
-	name := strings.TrimSpace(u.Fragment)
-	if unesc, err := url.QueryUnescape(name); err == nil && unesc != "" {
-		name = strings.TrimSpace(unesc)
-	}
-	if name == "" {
-		name = host
-	}
-	srv := &models.VlessServer{
-		ID:        serverID(raw, host, port),
-		Name:      name,
-		RawVLESS:  raw,
-		Host:      host,
-		Port:      port,
-		UUID:      uuid,
-		Params:    params,
-		CreatedAt: time.Now(),
-	}
-	return srv, nil
+	return ParseProxyLink(vlessURL)
 }
 
 var probeHostIPCache sync.Map
@@ -389,47 +400,44 @@ func roundMbps(v float64) float64 {
 }
 
 func splitVlessLines(payload string) []string {
-	lines := strings.FieldsFunc(payload, func(r rune) bool {
-		return r == '\n' || r == '\r'
-	})
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		low := strings.ToLower(line)
-		if strings.HasPrefix(low, "vless://") ||
-			strings.HasPrefix(low, "trojan://") ||
-			strings.HasPrefix(low, "hysteria2://") ||
-			strings.HasPrefix(low, "hy2://") {
-			out = append(out, line)
-		}
-	}
-	return out
+	return splitProxyLines(payload)
 }
 
+// parseSubscriptionLinksWithFormat определяет формат тела подписки и возвращает ссылки + имя формата.
+func parseSubscriptionLinksWithFormat(body string) ([]string, string, error) {
+	links, err := ExtractSubscriptionLinks(body)
+	if err != nil {
+		return nil, "", err
+	}
+	trimmed := strings.TrimSpace(body)
+	format := "plain-uri"
+	switch {
+	case strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "["):
+		format = "sing-box-json"
+	case looksLikeClashYAML(trimmed):
+		format = "clash-yaml"
+	default:
+		if len(splitProxyLines(trimmed)) == 0 {
+			format = "base64"
+		}
+	}
+	return links, format, nil
+}
+
+// decodeSubscriptionPayload оставлен для обратной совместимости (используется в тестах):
+// снимает base64-обёртку или возвращает исходный plain-текст.
 func decodeSubscriptionPayload(payload string) (string, error) {
 	trimmed := strings.TrimSpace(payload)
-	low := strings.ToLower(trimmed)
-	if strings.Contains(low, "vless://") || strings.Contains(low, "trojan://") || strings.Contains(low, "hysteria2://") {
-		return trimmed, nil
-	}
-	raw := strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "").Replace(trimmed)
-	if raw == "" {
+	if trimmed == "" {
 		return "", fmt.Errorf("subscription payload is empty")
 	}
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		decoded, err = base64.RawStdEncoding.DecodeString(raw)
+	if len(splitProxyLines(trimmed)) > 0 {
+		return trimmed, nil
 	}
-	if err != nil {
-		decoded, err = base64.URLEncoding.DecodeString(raw)
+	if dec, ok := decodeSubscriptionBody(trimmed); ok {
+		return dec, nil
 	}
-	if err != nil {
-		decoded, err = base64.RawURLEncoding.DecodeString(raw)
-	}
-	if err != nil {
-		return "", fmt.Errorf("subscription payload is not valid base64")
-	}
-	return string(decoded), nil
+	return "", fmt.Errorf("subscription payload is not valid base64")
 }
 
 func serverID(raw, host, port string) string {

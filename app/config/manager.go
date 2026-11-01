@@ -19,6 +19,9 @@ func GetUserRoutingRules(cfg models.AppConfig) []models.RouteRule {
 }
 
 // AddUserRoutingRule добавляет правило: target "proxy" | "direct" | "dpi-bypass" | "block".
+// Для target=dpi-bypass домен дополнительно попадает в zapret/lists/custom-dpi.txt,
+// чтобы winws2 действительно обходил его (правило маршрутизации само по себе
+// влияет только на sing-box и до DPI не доходит).
 func AddUserRoutingRule(cfg *models.AppConfig, pattern string, target string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
@@ -36,6 +39,26 @@ func AddUserRoutingRule(cfg *models.AppConfig, pattern string, target string) er
 	rule := userRuleFromPattern(pattern, action)
 	cfg.UserRoutingRules = append(cfg.UserRoutingRules, rule)
 	return nil
+}
+
+// CustomDpiEntriesForRules возвращает домены из пользовательских правил с действием
+// dpi-bypass. Используется для полной пересборки custom-dpi.txt, чтобы список
+// всегда соответствовал текущему набору правил.
+func CustomDpiEntriesForRules(cfg *models.AppConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	out := make([]string, 0, len(cfg.UserRoutingRules))
+	for _, r := range cfg.UserRoutingRules {
+		if r.Action != models.RouteDPIBypass {
+			continue
+		}
+		out = append(out, r.Domains...)
+		for _, s := range r.DomainSuffixes {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func userRuleFromPattern(pattern string, action models.RouteAction) models.RouteRule {
@@ -98,4 +121,40 @@ func userRuleSignature(r models.RouteRule) string {
 		return "." + r.DomainSuffixes[0]
 	}
 	return ""
+}
+
+// RemoveUserRoutingRuleAt удаляет правило по индексу в cfg.UserRoutingRules.
+//
+// Это единственный надёжный способ, когда на один домен заведено несколько правил
+// с разными действиями: удаление по шаблону снесло бы их все, а по действию —
+// можно перепутать порядок. Индекс приходит из того же снимка, что показан в UI.
+func RemoveUserRoutingRuleAt(cfg *models.AppConfig, index int) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if index < 0 || index >= len(cfg.UserRoutingRules) {
+		return fmt.Errorf("правило не найдено: индекс %d вне диапазона", index)
+	}
+	cfg.UserRoutingRules = append(cfg.UserRoutingRules[:index], cfg.UserRoutingRules[index+1:]...)
+	return nil
+}
+
+// FindUserRoutingRuleIndex находит правило по шаблону и действию.
+// Возвращает -1, если такого нет.
+func FindUserRoutingRuleIndex(cfg *models.AppConfig, pattern, action string) int {
+	if cfg == nil {
+		return -1
+	}
+	pattern = strings.TrimSpace(pattern)
+	action = strings.TrimSpace(action)
+	for i, r := range cfg.UserRoutingRules {
+		if userRuleSignature(r) != pattern {
+			continue
+		}
+		if action != "" && string(r.Action) != action {
+			continue
+		}
+		return i
+	}
+	return -1
 }

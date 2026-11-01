@@ -135,6 +135,7 @@ type UIServer struct {
 	Name                  string  `json:"name"`
 	Host                  string  `json:"host"`
 	Port                  string  `json:"port"`
+	Protocol              string  `json:"protocol"`
 	Source                string  `json:"source"`
 	FromSubscription      bool    `json:"fromSubscription"`
 	LastCheckOK           bool    `json:"lastCheckOk"`
@@ -291,6 +292,11 @@ func (a *App) startup(ctx context.Context) {
 		config.EnsureLocalInboundSecrets(&cfg)
 	}
 	a.st = state.New(cfg)
+	// Сразу синхронизируем домены из правил обхода DPI в custom-dpi.txt.
+	initSnap := a.st.Snapshot()
+	_ = dpi.SetCustomDpiEntries(config.CustomDpiEntriesForRules(&initSnap))
+	a.invalidateRoutingDpiPanelCaches()
+
 	coreBinary, _ := core.ResolveBinaryPath()
 	a.coreManager = core.NewManager(core.NewAdapter(coreBinary))
 	a.dpiRunner = &dpi.Runner{}
@@ -401,6 +407,16 @@ func (a *App) invalidateRoutingDpiPanelCaches() {
 }
 
 func (a *App) warmRoutingDpiPanelCaches() {
+	// Список custom-dpi должен существовать и быть синхронизирован с правилами маршрутизации.
+	a.mu.Lock()
+	if a.st != nil {
+		snap := a.st.Snapshot()
+		_ = dpi.SetCustomDpiEntries(config.CustomDpiEntriesForRules(&snap))
+	} else {
+		_, _ = dpi.EnsureCustomDpiList()
+	}
+	a.mu.Unlock()
+
 	a.invalidateRoutingDpiPanelCaches()
 	_, _ = a.GetAvailableDpiLists()
 	_, _ = a.GetRoutingSplitView()
@@ -449,12 +465,14 @@ func (a *App) GetUIState() UIState {
 	effectiveServers := s.EffectiveServers()
 	servers := make([]UIServer, 0, len(effectiveServers))
 	for _, it := range effectiveServers {
+		srv := it
 		prem := models.ServerMatchesAuthorPremium(it, s.PremiumServerNameSubstrings)
 		servers = append(servers, UIServer{
 			ID:                    it.ID,
 			Name:                  it.Name,
 			Host:                  it.Host,
 			Port:                  it.Port,
+			Protocol:              multiserver.ProtocolOf(&srv),
 			Source:                it.Source,
 			FromSubscription:      it.FromSubscription,
 			LastCheckOK:           it.LastCheckOK,
@@ -682,12 +700,30 @@ func (a *App) ShouldExitOnClose() bool {
 	return a.forceQuit
 }
 
+// CloseToTray скрывает главное окно в трей и показывает уведомление.
+func (a *App) CloseToTray() {
+	if a.ctx != nil {
+		runtime.WindowHide(a.ctx)
+		notifyTrayHidden()
+	}
+}
+
+// RequestQuit завершает приложение целиком (выход из трея или аварийный выход).
+// forceQuit выставляется ДО Quit, иначе OnBeforeClose увидит false и просто скроет окно в трей.
 func (a *App) RequestQuit() {
 	a.mu.Lock()
 	a.forceQuit = true
+	ctx := a.ctx
 	a.mu.Unlock()
-	// systray.Quit() здесь не вызываем — закрытие окна не должно рвать цикл трея и WebView2
-	runtime.Quit(a.ctx)
+	if ctx == nil {
+		// Вызвали до OnStartup — завершаем процесс напрямую, иначе кнопка «закрыть» не сработает.
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return
+	}
+	runtime.Quit(ctx)
 }
 
 // refreshSystrayAfterResume повторно применяет иконку и подпись трея после выхода из сна,
@@ -728,8 +764,33 @@ func (a *App) runSystray() {
 	}, func() {})
 }
 
+// AddVLESS добавляет один узел из прокси-ссылки любого поддерживаемого протокола.
 func (a *App) AddVLESS(raw string) error {
-	server, err := multiserver.ParseVlessString(raw)
+	raw = strings.TrimSpace(raw)
+	// Пользователь мог вставить несколько ссылок сразу — добавляем все.
+	if lines := strings.Split(raw, "\n"); len(lines) > 1 {
+		added := 0
+		var lastErr error
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || !multiserver.IsProxyLink(line) {
+				continue
+			}
+			if err := a.AddVLESS(line); err != nil {
+				lastErr = err
+				continue
+			}
+			added++
+		}
+		if added == 0 {
+			if lastErr != nil {
+				return lastErr
+			}
+			return fmt.Errorf("в тексте не найдено прокси-ссылок")
+		}
+		return nil
+	}
+	server, err := multiserver.ParseProxyLink(raw)
 	if err != nil {
 		return err
 	}
@@ -746,6 +807,54 @@ func (a *App) AddVLESS(raw string) error {
 	})
 }
 
+// ImportServersFromText импортирует произвольный текст: ссылки, base64-список, Clash YAML,
+// sing-box/Xray JSON. Возвращает количество добавленных узлов.
+func (a *App) ImportServersFromText(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, fmt.Errorf("пустой текст для импорта")
+	}
+	links, err := multiserver.ExtractSubscriptionLinks(raw)
+	if err != nil {
+		return 0, err
+	}
+	added := 0
+	var firstErr error
+	for _, link := range links {
+		server, err := multiserver.ParseProxyLink(link)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		server.Source = "manual"
+		if err := a.updateConfig(func(cfg *models.AppConfig) {
+			if cfg.SubscriptionURL != "" || len(cfg.VlessServers) > 0 {
+				cfg.VlessServers = append(cfg.VlessServers, *server)
+			} else {
+				cfg.Servers = append(cfg.Servers, *server)
+			}
+			if cfg.ActiveServerID == "" {
+				cfg.ActiveServerID = server.ID
+			}
+		}); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		added++
+	}
+	if added == 0 {
+		if firstErr != nil {
+			return 0, fmt.Errorf("не удалось импортировать ни одного узла: %w", firstErr)
+		}
+		return 0, fmt.Errorf("в тексте не найдено прокси-ссылок")
+	}
+	return added, nil
+}
+
 func (a *App) ImportServerFromClipboard() error {
 	raw, err := runtime.ClipboardGetText(a.ctx)
 	if err != nil {
@@ -755,17 +864,32 @@ func (a *App) ImportServerFromClipboard() error {
 	if raw == "" {
 		return fmt.Errorf("буфер обмена пуст")
 	}
-	low := strings.ToLower(raw)
-	if strings.HasPrefix(low, "vless://") || strings.HasPrefix(low, "trojan://") || strings.HasPrefix(low, "hysteria2://") || strings.HasPrefix(low, "hy2://") {
-		return a.AddVLESS(raw)
-	}
-	if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+	// 1. Ссылка на подписку (http/https), которую нельзя перепутать с прокси-ссылкой.
+	if isSubscriptionURLLine(raw) {
 		if err := a.SetSubscriptionURL(raw); err != nil {
 			return err
 		}
 		return a.RefreshSubscription()
 	}
-	return fmt.Errorf("нужна ссылка vless://, trojan://, hysteria2:// или https:// подписки")
+	// 2. Одиночная или множественная прокси-ссылка.
+	if multiserver.IsProxyLink(raw) {
+		return a.AddVLESS(raw)
+	}
+	// 3. Готовый список узлов / base64 / Clash YAML / JSON — импортируем как узлы.
+	if links, err := multiserver.ExtractSubscriptionLinks(raw); err == nil && len(links) > 0 {
+		_, impErr := a.ImportServersFromText(raw)
+		return impErr
+	}
+	return fmt.Errorf("не распознан формат — нужна ссылка vless://, vmess://, trojan://, ss://, hysteria2://, tuic://, anytls://, ссылка подписки https://… или их список")
+}
+
+// isSubscriptionURLLine определяет, является ли строка HTTP(S)-ссылкой подписки.
+func isSubscriptionURLLine(raw string) bool {
+	low := strings.ToLower(strings.TrimSpace(raw))
+	if !strings.HasPrefix(low, "http://") && !strings.HasPrefix(low, "https://") {
+		return false
+	}
+	return !multiserver.IsProxyLink(raw)
 }
 
 // ClearSubscription удаляет URL подписки и все узлы, полученные из подписки (ручные остаются).
@@ -923,6 +1047,124 @@ func replaceServerInConfig(cfg *models.AppConfig, srv models.VlessServer) {
 	}
 }
 
+// SubscriptionPreview — результат проверки ссылки подписки без сохранения в конфиг.
+type SubscriptionPreview struct {
+	OK            bool   `json:"ok"`
+	URL           string `json:"url"`
+	Format        string `json:"format"`
+	ProviderLabel string `json:"providerLabel"`
+	Name          string `json:"name"`
+	Total         int    `json:"total"`
+	Vless         int    `json:"vless"`
+	VMess         int    `json:"vmess"`
+	Trojan        int    `json:"trojan"`
+	Shadowsocks   int    `json:"shadowsocks"`
+	Hysteria2     int    `json:"hysteria2"`
+	Hysteria1     int    `json:"hysteria"`
+	Tuic          int    `json:"tuic"`
+	AnyTLS        int    `json:"anytls"`
+	Socks         int    `json:"socks"`
+	HTTP          int    `json:"http"`
+	Wireguard     int    `json:"wireguard"`
+	Other         int    `json:"other"`
+	ExpiresUnix   int64  `json:"expiresUnix"`
+	TotalBytes    int64  `json:"totalBytes"`
+	UsedBytes     int64  `json:"usedBytes"`
+	Error         string `json:"error,omitempty"`
+}
+
+// PreviewSubscription скачивает подписку по произвольной ссылке и разбирает её,
+// не изменяя сохранённый конфиг. Нужен, чтобы показать пользователю,
+// что именно придёт по ссылке, до её применения.
+func (a *App) PreviewSubscription(rawURL string) SubscriptionPreview {
+	preview := SubscriptionPreview{URL: strings.TrimSpace(rawURL)}
+	a.mu.Lock()
+	proxyPort := 8080
+	if a.st != nil {
+		proxyPort = a.st.Snapshot().ListenPort()
+	}
+	a.mu.Unlock()
+
+	links, meta, err := multiserver.FetchSubscriptionWithProxy(preview.URL, proxyPort)
+	if err != nil {
+		preview.Error = err.Error()
+		return preview
+	}
+	preview.Format = meta.Format
+	preview.ProviderLabel = meta.ProviderLabel
+	preview.Name = meta.Name
+	preview.ExpiresUnix = meta.ExpiresUnix
+	preview.TotalBytes = meta.TotalBytes
+	preview.UsedBytes = meta.UploadBytes + meta.DownloadBytes
+	seen := make(map[string]bool, len(links))
+	for _, link := range links {
+		srv, err := multiserver.ParseProxyLink(link)
+		if err != nil {
+			continue
+		}
+		if seen[srv.ID] {
+			continue
+		}
+		seen[srv.ID] = true
+		preview.Total++
+		switch multiserver.ProtocolOf(srv) {
+		case "vless":
+			preview.Vless++
+		case "vmess":
+			preview.VMess++
+		case "trojan":
+			preview.Trojan++
+		case "shadowsocks":
+			preview.Shadowsocks++
+		case "hysteria2":
+			preview.Hysteria2++
+		case "hysteria":
+			preview.Hysteria1++
+		case "tuic":
+			preview.Tuic++
+		case "anytls":
+			preview.AnyTLS++
+		case "socks":
+			preview.Socks++
+		case "http":
+			preview.HTTP++
+		case "wireguard":
+			preview.Wireguard++
+		default:
+			preview.Other++
+		}
+	}
+	preview.OK = preview.Total > 0
+	if !preview.OK {
+		preview.Error = "в подписке не найдено поддерживаемых узлов"
+	}
+	return preview
+}
+
+// ParseServerLink разбирает одну прокси-ссылку и возвращает её поля для предпросмотра
+// в диалоге добавления узла. Конфиг не изменяется.
+func (a *App) ParseServerLink(raw string) (map[string]string, error) {
+	srv, err := multiserver.ParseProxyLink(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+	params := make(map[string]string, len(srv.Params)+4)
+	for k, v := range srv.Params {
+		params[k] = v
+	}
+	params["protocol"] = multiserver.ProtocolOf(srv)
+	return map[string]string{
+		"id":       srv.ID,
+		"name":     srv.Name,
+		"host":     srv.Host,
+		"port":     srv.Port,
+		"protocol": multiserver.ProtocolOf(srv),
+		"security": strings.ToLower(strings.TrimSpace(srv.Params["security"])),
+		"network":  strings.ToLower(strings.TrimSpace(srv.Params["type"])),
+		"params":   fmt.Sprintf("%v", params),
+	}, nil
+}
+
 func (a *App) RefreshSubscription() error {
 	a.mu.Lock()
 	if a.st == nil {
@@ -942,7 +1184,7 @@ func (a *App) RefreshSubscription() error {
 	if fetchErr == nil && len(rawLinks) > 0 {
 		servers = make([]*models.VlessServer, 0, len(rawLinks))
 		for _, link := range rawLinks {
-			srv, err := multiserver.ParseVlessString(link)
+			srv, err := multiserver.ParseProxyLink(link)
 			if err != nil {
 				continue
 			}
@@ -950,7 +1192,11 @@ func (a *App) RefreshSubscription() error {
 			srv.Source = "subscription"
 			servers = append(servers, srv)
 		}
-	} else {
+		if len(servers) == 0 {
+			fetchErr = fmt.Errorf("в подписке не найдено поддерживаемых узлов")
+		}
+	}
+	if fetchErr != nil || len(servers) == 0 {
 		// Анти-ТСПУ фоллбэк: если провайдер заблокировал URL подписки, берём серверы из локального кэша
 		// (даже если его TTL истёк) или из текущего списка и проверяем, какие из них живы прямо сейчас!
 		cache, _, _ := multiserver.LoadCache(subscriptionURL)
@@ -1582,6 +1828,27 @@ func (a *App) RunDpiPresetTests() ([]DpiPresetTestResult, error) {
 	return out, nil
 }
 
+// summarizeProbe превращает сводку проб в строку для таблицы результатов.
+func summarizeProbe(p dpi.ProbeSummary) string {
+	if p.Total == 0 {
+		return "пробы не выполнялись"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "доступно %d/%d", p.OK, p.Total)
+	if p.AvgMs > 0 {
+		fmt.Fprintf(&b, ", средняя задержка %d мс", p.AvgMs)
+	}
+	if len(p.FailedFor) > 0 {
+		b.WriteString("; не открылось: ")
+		b.WriteString(strings.Join(p.FailedFor, ", "))
+	}
+	s := b.String()
+	if len(s) > 800 {
+		s = s[:797] + "…"
+	}
+	return s
+}
+
 // RunDpiAdaptiveTuning генерирует набор кандидатных пресетов в памяти (на базе встроенных эталонов zapret),
 // для каждого — фильтрация по включённым спискам из конфига, опционально strategies.lua, затем winws2 и HTTP-пробы;
 // лучший вариант сохраняется в presets/auto/.
@@ -1607,11 +1874,14 @@ func (a *App) RunDpiAdaptiveTuning(gamingLua bool) (*DpiTuneResult, error) {
 	time.Sleep(500 * time.Millisecond)
 
 	gen := dpi.DefaultGeneratedTuningCandidates()
-	urls := dpi.DefaultProbeURLs()
-	probeTO := 12 * time.Second
+	// Пробы идут параллельно, поэтому таймаут можно держать коротким:
+	// это ускоряет перебор кандидатов без потери точности.
+	targets := dpi.DefaultProbeTargets()
+	probeTO := 6 * time.Second
 
 	out := make([]DpiTuneCandidateResult, 0, len(gen))
 	bestHits := -1
+	var bestAvgMs int64
 	var bestBody []byte
 	bestSource := ""
 
@@ -1630,6 +1900,9 @@ func (a *App) RunDpiAdaptiveTuning(gamingLua bool) (*DpiTuneResult, error) {
 				text = dpi.EnsureStrategiesLuaInit(text)
 			}
 			text = dpi.FilterPresetLinesByEnabledLists(text, &listSnap)
+			// Правила с целью «обход DPI» живут в custom-dpi.txt; подключаем его к кандидату,
+			// иначе подбор оценит пресет без пользовательских доменов.
+			text = dpi.InjectCustomDpiHostlist(text)
 			body = []byte(text)
 			fname := fmt.Sprintf("_pulse_tune_%03d_%s.txt", idx, dpi.SanitizeTuneFileName(c.ID))
 			full := filepath.Join(autoDir, fname)
@@ -1694,12 +1967,10 @@ func (a *App) RunDpiAdaptiveTuning(gamingLua bool) (*DpiTuneResult, error) {
 			}
 			a.mu.Unlock()
 
+			// Даём winws2 подняться и применить фильтры, прежде чем мерить.
 			time.Sleep(2 * time.Second)
-			hits, total, lines := dpi.RunHTTPProbes(urls, probeTO)
-			probeText := strings.Join(lines, "; ")
-			if len(probeText) > 800 {
-				probeText = probeText[:797] + "…"
-			}
+			probe := dpi.RunProbeTargets(targets, probeTO)
+			probeText := summarizeProbe(probe)
 
 			a.mu.Lock()
 			if a.dpiRunner != nil {
@@ -1710,11 +1981,15 @@ func (a *App) RunDpiAdaptiveTuning(gamingLua bool) (*DpiTuneResult, error) {
 
 			out = append(out, DpiTuneCandidateResult{
 				Label: c.Label, SourceRel: "generated:" + c.ID, ProfileName: pn,
-				PresetAlive: true, ProbeHits: hits, ProbeTotal: total,
-				Detail: aliveDet + " | пробы: " + probeText,
+				PresetAlive: true, ProbeHits: probe.OK, ProbeTotal: probe.Total,
+				Detail: aliveDet + " | " + probeText,
 			})
-			if hits > bestHits {
-				bestHits = hits
+			// Ранжирование: больше успешных проб — лучше. При равенстве выигрывает
+			// кандидат с меньшей средней задержкой.
+			if probe.OK > bestHits || (probe.OK == bestHits && bestHits > 0 && probe.AvgMs > 0 &&
+				(bestAvgMs == 0 || probe.AvgMs < bestAvgMs)) {
+				bestHits = probe.OK
+				bestAvgMs = probe.AvgMs
 				bestBody = append([]byte(nil), body...)
 				bestSource = "generated:" + c.ID
 			}
@@ -1822,6 +2097,12 @@ func (a *App) applyDpiAutoSnapshotBytes(sourceConfigRel string, prepend []byte, 
 	raw := orig
 	if len(prepend) > 0 {
 		raw = append(append([]byte{}, prepend...), orig...)
+	}
+	// Подключаем пользовательский список обхода DPI, чтобы снимок не терял
+	// домены из правил с действием dpi-bypass.
+	raw = []byte(dpi.InjectCustomDpiHostlist(string(raw)))
+	if _, err := dpi.EnsureCustomDpiList(); err != nil {
+		return "", "", fmt.Errorf("список custom-dpi.txt: %w", err)
 	}
 
 	ts := time.Now().Format("20060102150405")

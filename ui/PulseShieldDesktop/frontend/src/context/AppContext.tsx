@@ -1,1295 +1,630 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  ActivateLicense,
-  AddVLESS,
-  ApplyAutoUpdate,
-  ApplyDnsNow,
-  ApplyRoutingJSON,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  AddUserRoutingRule,
   ApplyRuntime,
-  ApplyRuntimeDeferred,
-  ClearLogFiles,
-  ClearSubscription,
-  CreateDiagnosticsBundle,
   GetAppVersion,
   GetLogsState,
   GetRealtimeStats,
+  GetRoutingSplitView,
   GetServiceHealth,
   GetUIState,
-  GetUpdateInfo,
-  ImportDPIConfig,
-  ImportServerFromClipboard,
-  OpenRoutingJSON,
-  ProgramGuide,
-  RefreshSubscription,
   RemoveServer,
-  ResyncDPIProfilesFromDisk,
+  RemoveUserRoutingRuleAt,
+  RequestQuit,
   RetestServersBatch,
-  RunDpiAdaptiveTuning,
-  RunSelfCheckText,
-  SaveRoutingJSON,
-  SetActiveDPIProfile,
   SetActiveServer,
   SetDPIEnabled,
-  SetDnsSettings,
-  SetLicenseAPIBase,
   SetProxyEnabled,
-  SetProxyPort,
   SetRoutingProfile,
+  ImportServersFromText,
+  ImportServerFromClipboard,
+  ClearSubscription,
+  RefreshSubscription,
   SetSubscriptionURL,
-  SetTelegramChannelName,
-  SetTelegramInfoURL,
-  StopAll,
+  PreviewSubscription,
+  RunDpiAdaptiveTuning,
+  RunSelfCheckText,
+  CreateDiagnosticsBundle,
+  SetActiveDPIProfile,
+  GetAvailableDpiLists,
+  ToggleDpiList,
+  GetDpiListContent,
+  SetDpiListContent,
+  SetProxyPort,
+  SetDnsSettings,
+  ActivateLicense,
+  CheckForUpdates,
+  GetUpdateInfo,
+  ApplyAutoUpdate,
+  ProgramGuide,
+  GetZapretListsPathHint,
+  ClearLogFiles,
+  CloseToTray,
+  OpenLogsFolder,
 } from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
-import { BrowserOpenURL, EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
+import type { AccentKey, NavKey, SheetKey, ThemeKey, ToastState } from "../types";
 import {
-  NavKey,
-  ThemeKey,
-  ToastState,
-  ChartPt,
-  LogSource,
-  LogViewMode,
-} from "../types";
-import {
-  applyAccentHex,
-  cubicBezierSegmentsThroughPoints,
-  DEEP_FLOW_TENSION,
-  formatRuntimeFailure,
-  humanizeRuntimeError,
-  logPanelContent,
-  logPanelPlaceholder,
-  ONBOARDING_KEY,
-  parseActivationPaste,
-  playSoftChime,
-  routingPresetTooltip,
-  routingProfileLabel,
-  serverPingLabel,
-  uniqueRoutingProfiles,
-  formatSubscriptionExpiry,
-  formatBps,
-  formatBytes,
-  formatSessionClock,
-  ROUTING_MODE_SHORT,
-  BUILTIN_ROUTING_KEYS,
-} from "../utils";
+  ACCENT_STORAGE_KEY,
+  DEFAULT_ACCENT,
+  DEFAULT_THEME,
+  THEME_STORAGE_KEY,
+  normalizeAccent,
+  normalizeTheme,
+} from "../themes";
 
-export type AppContextValue = {
-  // Navigation
+type Any = Record<string, unknown>;
+
+type Ctx = {
+  // РЅР°РІРёРіР°С†РёСЏ
   active: NavKey;
   setActive: (k: NavKey) => void;
+  sheet: SheetKey | null;
+  openSheet: (k: SheetKey) => void;
+  closeSheet: () => void;
 
-  // Toggle states
+  // С‚РµРјР°
+  theme: ThemeKey;
+  accent: AccentKey;
+  setTheme: (t: ThemeKey) => void;
+  setAccent: (a: AccentKey) => void;
+
+  // СЃРѕСЃС‚РѕСЏРЅРёРµ РґРІРёР¶РєРѕРІ
+  uiState: Any;
+  health: Any;
+  rt: Any;
+  logs: Any;
+  appVersion: string;
+  busy: boolean;
+  proxyPhase: "idle" | "connecting" | "connected";
   proxyEnabled: boolean;
   dpiEnabled: boolean;
-
-  // Remote data
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  uiState: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  health: any;
-  rt: {
-    connected: boolean;
-    status: string;
-    downloadBps: number;
-    uploadBps: number;
-    sessionDownloadBytes: number;
-    sessionUploadBytes: number;
-    sessionElapsedSeconds: number;
-    proxyProcessDetails: unknown[];
-  };
-  speedHistory: number[];
-  logs: {
-    coreLogTail: string;
-    dpiLogTail: string;
-    coreLogPath: string;
-    dpiLogPath: string;
-    coreErrors: string;
-    dpiErrors: string;
-    coreConnLines: string;
-    dpiConnLines: string;
-  };
-  appVersion: string;
-  updateHint: string;
-  updateInfo: {
-    ok: boolean;
-    releaseUrl: string;
-    downloadUrl: string;
-    installerDownloadUrl: string;
-    upToDate: boolean;
-    latestTag: string;
-  } | null;
-
-  // Visual
-  theme: ThemeKey;
-  setTheme: (t: ThemeKey) => void;
-  accentDraft: string;
-  setAccentDraft: (c: string) => void;
-  themeDraft: ThemeKey;
-  setThemeDraft: (t: ThemeKey) => void;
-
-  // Loading states
-  busy: boolean;
-  proxyPhase: "idle" | "connecting" | "error";
-  toast: ToastState | null;
-  setToast: (t: ToastState | null) => void;
-  showOnboarding: boolean;
-  setShowOnboarding: (v: boolean) => void;
-  globalBusy: string | null;
-  selfCheckBusy: boolean;
-  testingServerId: string | null;
-
-  // DPI tune
-  dpiTuneGamingLua: boolean;
-  setDpiTuneGamingLua: (v: boolean) => void;
-  dpiTuneResult: main.DpiTuneResult | null;
-
-  // Actions
-  notify: (text: string, variant?: "info" | "error", openLogs?: boolean) => void;
-  refreshState: () => Promise<void>;
-  pollHealth: () => Promise<void>;
-  setProxy: (enabled: boolean) => Promise<void>;
-  setDpi: (enabled: boolean) => Promise<void>;
-  setRouting: (name: string) => Promise<void>;
-  setActiveServer: (id: string) => Promise<void>;
-  removeServer: (id: string) => Promise<void>;
-  setActiveDPI: (name: string) => Promise<void>;
-  runDpiAdaptiveTuning: (opts?: { gamingLua?: boolean }) => Promise<void>;
-  runRetestServersBatch: (ids: string[]) => Promise<void>;
-  runRetestSingleServer: (id: string) => Promise<void>;
-  refreshSubscriptionServers: (url: string) => Promise<void>;
-  importServerFromClipboard: () => Promise<void>;
-  clearSubscriptionFromConfig: () => Promise<void>;
-  addServerFromInput: (vlessUrl: string) => Promise<void>;
-  resetRoutingToRfSmart: () => Promise<void>;
-  importRouting: () => Promise<void>;
-  exportRouting: () => Promise<void>;
-  importDpiConfig: () => Promise<void>;
+  setProxy: (on: boolean) => Promise<void>;
+  setDpi: (on: boolean) => Promise<void>;
   stopAll: () => Promise<void>;
-  loadGuide: () => Promise<void>;
-  clearLogFiles: () => Promise<void>;
-  refreshLogs: () => Promise<void>;
+
+  // СЃРµСЂРІРµСЂС‹ Рё РјР°СЂС€СЂСѓС‚С‹
+  servers: Any[];
+  activeServer: Any | null;
+  splitRows: Any[];
+  routingProfile: string;
+  setRouting: (name: string) => Promise<void>;
+  addRule: (pattern: string, target: string) => Promise<void>;
+  removeRule: (index: number) => Promise<void>;
+  verifyTarget: (q: string) => Promise<Any | null>;
+  selectServer: (id: string) => Promise<void>;
+  removeServer: (id: string) => Promise<void>;
+  retestAll: () => Promise<void>;
+
+  // РїРѕРґРїРёСЃРєР°
+  previewSubscription: (url: string) => Promise<Any | null>;
+  importText: (text: string) => Promise<number>;
+  importFromClipboard: () => Promise<void>;
+  applySubscription: (url: string) => Promise<void>;
+  refreshSubscription: () => Promise<void>;
+  clearSubscription: () => Promise<void>;
+
+  // DPI
+  dpiLists: Any[];
+  refreshDpiLists: () => Promise<void>;
+  toggleDpiList: (name: string, on: boolean) => Promise<void>;
+  readDpiList: (name: string) => Promise<Any | null>;
+  writeDpiList: (name: string, entries: string[]) => Promise<void>;
+  runDpiTuning: () => Promise<Any | null>;
+  dpiTune: Any | null;
+  setDpiProfile: (name: string) => Promise<void>;
+  listsPath: string;
+
+  // РїСЂРѕС‡РµРµ
+  selfCheck: string;
   runSelfCheck: () => Promise<void>;
-  createBundle: () => Promise<void>;
-  runUpdateCheck: () => Promise<void>;
-  runAutoUpdate: () => Promise<void>;
-  runInstallerUpdate: () => Promise<void>;
-  applyVisualSettings: (theme: ThemeKey, accent: string) => Promise<void>;
-  applyProxyPort: (port: number) => Promise<void>;
-  saveDnsAndApply: (preset: string, primary: string, secondary: string) => Promise<void>;
-  saveTelegramMeta: (url: string, name: string) => Promise<void>;
-  activateFromBotLink: (raw: string) => Promise<void>;
+  exportBundle: () => Promise<void>;
+  proxyPortDraft: number;
+  applyProxyPort: (p: number) => Promise<void>;
+  applyDns: (preset: string, p: string, s: string) => Promise<void>;
+  activateLicense: (code: string) => Promise<void>;
+  checkUpdates: () => Promise<void>;
+  updateInfo: Any | null;
+  installUpdate: () => Promise<void>;
+  guide: string;
+  clearLogs: () => Promise<void>;
+  openLogsFolder: () => Promise<void>;
+  quit: () => void;
+  closeToTray: () => void;
 
-  // Text output
-  diagText: string;
-  guideText: string;
-
-  // Derived/computed
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  routingProfilesUnique: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  activeRoutingProfileMeta: any;
-  serverStats: { total: number; recommended: number; online: number; subscription: number; manual: number };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sortedServers: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  manualServers: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  subscriptionServers: any[];
-  dashboardHints: { key: string; text: string; nav: NavKey }[];
-  showVlessProtectedStrip: boolean;
-  chartPaths: { linePath: string; areaPath: string; max: number };
-  chartSmooth: number[];
-  rtChartId: string;
+  // СѓРІРµРґРѕРјР»РµРЅРёСЏ
+  toast: ToastState | null;
+  notify: (text: string, variant?: "info" | "error") => void;
+  refresh: () => Promise<void>;
 };
 
-export const AppContext = createContext<AppContextValue | null>(null);
+const AppCtx = createContext<Ctx | null>(null);
 
-export function useApp(): AppContextValue {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error("useApp must be used within AppProvider");
-  return ctx;
+function readLS(key: string): string {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLS(key: string, val: string) {
+  try {
+    localStorage.setItem(key, val);
+  } catch {
+    /* РїСЂРёРІР°С‚РЅС‹Р№ СЂРµР¶РёРј вЂ” РЅРµ РєСЂРёС‚РёС‡РЅРѕ */
+  }
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [active, setActive] = useState<NavKey>("dashboard");
-  const [proxyEnabled, setProxyEnabledState] = useState(true);
-  const [dpiEnabled, setDpiEnabledState] = useState(false);
-  const [guideText, setGuideText] = useState("");
-  const [diagText, setDiagText] = useState("");
-  const [uiState, setUiState] = useState<unknown>(null);
-  const [theme, setTheme] = useState<ThemeKey>("dark-neon");
-  const [themeDraft, setThemeDraft] = useState<ThemeKey>("dark-neon");
-  const [accentDraft, setAccentDraft] = useState("#78f65c");
-  const [rt, setRt] = useState<{
-    connected: boolean;
-    status: string;
-    downloadBps: number;
-    uploadBps: number;
-    sessionDownloadBytes: number;
-    sessionUploadBytes: number;
-    sessionElapsedSeconds: number;
-    proxyProcessDetails: unknown[];
-  }>({ connected: false, status: "", downloadBps: 0, uploadBps: 0, sessionDownloadBytes: 0, sessionUploadBytes: 0, sessionElapsedSeconds: 0, proxyProcessDetails: [] });
-  const [speedHistory, setSpeedHistory] = useState<number[]>([]);
-  const [logs, setLogs] = useState({
-    coreLogTail: "",
-    dpiLogTail: "",
-    coreLogPath: "",
-    dpiLogPath: "",
-    coreErrors: "",
-    dpiErrors: "",
-    coreConnLines: "",
-    dpiConnLines: "",
-  });
-  const [health, setHealth] = useState<unknown>(null);
+  const [active, setActiveRaw] = useState<NavKey>("shield");
+  const [sheet, setSheet] = useState<SheetKey | null>(null);
+  const [theme, setThemeRaw] = useState<ThemeKey>(() => normalizeTheme(readLS(THEME_STORAGE_KEY)));
+  const [accent, setAccentRaw] = useState<AccentKey>(() => normalizeAccent(readLS(ACCENT_STORAGE_KEY)));
+
+  const [uiState, setUiState] = useState<Any>({});
+  const [health, setHealth] = useState<Any>({});
+  const [rt, setRt] = useState<Any>({});
+  const [logs, setLogs] = useState<Any>({});
   const [appVersion, setAppVersion] = useState("");
-  const [updateHint, setUpdateHint] = useState("");
-  const [updateInfo, setUpdateInfo] = useState<{
-    ok: boolean;
-    releaseUrl: string;
-    downloadUrl: string;
-    installerDownloadUrl: string;
-    upToDate: boolean;
-    latestTag: string;
-  } | null>(null);
-
-  const [proxyPhase, setProxyPhase] = useState<"idle" | "connecting" | "error">("idle");
-  const proxyApplyDeadlineRef = useRef<number | null>(null);
-  const waitingDeferredApplyRef = useRef(false);
-  const proxyDeferJobExpectedRef = useRef(0);
-
-  const prevProxyRef = useRef<boolean | null>(null);
-  const [dpiTuneGamingLua, setDpiTuneGamingLua] = useState(true);
-  const [dpiTuneResult, setDpiTuneResult] = useState<main.DpiTuneResult | null>(null);
-  const [selfCheckBusy, setSelfCheckBusy] = useState(false);
-  const [testingServerId, setTestingServerId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [splitRows, setSplitRows] = useState<Any[]>([]);
+  const [dpiLists, setDpiLists] = useState<Any[]>([]);
+  const [dpiTune, setDpiTune] = useState<Any | null>(null);
+  const [selfCheck, setSelfCheck] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<Any | null>(null);
+  const [guide, setGuide] = useState("");
+  const [listsPath, setListsPath] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [proxyPortDraft, setProxyPortDraft] = useState(2080);
 
-  const notify = useCallback((text: string, variant: "info" | "error" = "info", openLogs?: boolean) => {
-    setToast({ text, variant, openLogs, dismissible: true });
+  const connectedRef = useRef(false);
+
+  const notify = useCallback((text: string, variant: "info" | "error" = "info") => {
+    setToast({ text, variant });
+    window.setTimeout(() => setToast((t) => (t && t.text === text ? null : t)), 4200);
   }, []);
 
-  const tunnelOkCelebrationSent = useRef(false);
+  const setActive = useCallback((k: NavKey) => {
+    setSheet(null);
+    setActiveRaw(k);
+  }, []);
+
+  const openSheet = useCallback((k: SheetKey) => setSheet(k), []);
+  const closeSheet = useCallback(() => setSheet(null), []);
+
+  const setTheme = useCallback((t: ThemeKey) => {
+    setThemeRaw(t);
+    writeLS(THEME_STORAGE_KEY, t);
+  }, []);
+
+  const setAccent = useCallback((a: AccentKey) => {
+    setAccentRaw(a);
+    writeLS(ACCENT_STORAGE_KEY, a);
+  }, []);
+
   useEffect(() => {
-    if (!health) return;
-    const h = health as { proxyEnabled?: boolean; proxyLocalOk?: boolean; vlessRemote?: string };
-    const tunnelUp = !!(h.proxyEnabled && h.proxyLocalOk && h.vlessRemote === "ok");
-    if (tunnelUp && !tunnelOkCelebrationSent.current) {
-      tunnelOkCelebrationSent.current = true;
-      notify("Поздравляем! Вы покинули Чебурнет.");
-      playSoftChime("success");
-    }
-    if (!tunnelUp) {
-      tunnelOkCelebrationSent.current = false;
-    }
-  }, [health, notify]);
+    const el = document.documentElement;
+    el.setAttribute("data-theme", theme);
+    el.setAttribute("data-accent", accent);
+  }, [theme, accent]);
 
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [globalBusy, setGlobalBusy] = useState<string | null>(null);
-
-  async function withBusy(label: string, fn: () => Promise<void>) {
-    setGlobalBusy(label);
+  /** РџРµСЂРµС‡РёС‚Р°С‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ РёР· Р±СЌРєРµРЅРґР°. */
+  const refresh = useCallback(async () => {
     try {
-      await fn();
-    } finally {
-      setGlobalBusy(null);
+      const [ui, h, r, l, rows] = await Promise.all([
+        GetUIState(),
+        GetServiceHealth(),
+        GetRealtimeStats(),
+        GetLogsState(),
+        GetRoutingSplitView(),
+      ]);
+      setUiState((ui || {}) as unknown as Any);
+      setHealth((h || {}) as unknown as Any);
+      setRt((r || {}) as unknown as Any);
+      setLogs((l || {}) as unknown as Any);
+      setSplitRows((rows || []) as unknown as Any[]);
+      const port = Number((ui as unknown as Any)?.proxyPort);
+      if (port > 0) setProxyPortDraft(port);
+    } catch {
+      /* Р±СЌРєРµРЅРґ РµС‰С‘ РЅРµ РіРѕС‚РѕРІ вЂ” РїРѕРІС‚РѕСЂРёРј РЅР° СЃР»РµРґСѓСЋС‰РµРј С‚РёРєРµ */
     }
-  }
-
-  useEffect(() => {
-    const saved = localStorage.getItem("pulseshield.theme") as ThemeKey | null;
-    if (saved) {
-      setTheme(saved);
-      setThemeDraft(saved);
-    }
-    const savedAccent = localStorage.getItem("pulseshield.accentHex");
-    if (savedAccent && /^#[0-9a-fA-F]{6}$/.test(savedAccent)) {
-      setAccentDraft(savedAccent);
-      applyAccentHex(savedAccent);
-    }
-    GetUIState().then((s) => {
-      setUiState(s);
-      const st = s as unknown as Record<string, unknown>;
-      setProxyEnabledState(!!st.proxyEnabled);
-      setDpiEnabledState(!!st.dpiEnabled);
-    }).catch(() => {});
-    GetAppVersion().then(setAppVersion).catch(() => setAppVersion("dev"));
   }, []);
 
   useEffect(() => {
-    const off = EventsOn("update-progress", (json: string) => {
+    let alive = true;
+    void (async () => {
+      await refresh();
+      if (!alive) return;
       try {
-        const o = JSON.parse(json) as { phase: string; pct: number };
-        if (o.phase === "download") {
-          if (typeof o.pct === "number" && o.pct >= 0) {
-            setGlobalBusy(`Скачивание обновления… ${o.pct}%`);
-          } else {
-            setGlobalBusy("Скачивание обновления…");
-          }
-        } else if (o.phase === "unpack") {
-          setGlobalBusy("Распаковка и подготовка файлов…");
-        } else if (o.phase === "install") {
-          setGlobalBusy("Запуск тихого установщика…");
-        }
+        setAppVersion(await GetAppVersion());
+        setListsPath(await GetZapretListsPathHint());
+        setGuide(await ProgramGuide());
       } catch {
-        /* ignore malformed payload */
+        /* РЅРµРѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РґР°РЅРЅС‹Рµ */
       }
-    });
-    return () => off();
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [refresh]);
+
+  // Р–РёРІС‹Рµ РјРµС‚СЂРёРєРё: РѕР±РЅРѕРІР»СЏРµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ РєР°Р¶РґС‹Рµ 2 СЃРµРєСѓРЅРґС‹.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void (async () => {
+        try {
+          const [r, h] = await Promise.all([GetRealtimeStats(), GetServiceHealth()]);
+          setRt((r || {}) as unknown as Any);
+          setHealth((h || {}) as unknown as Any);
+        } catch {
+          /* РїСЂРѕРїСѓСЃРєР°РµРј С‚РёРє */
+        }
+      })();
+    }, 2000);
+    return () => window.clearInterval(id);
   }, []);
 
+  // РџРѕРґРїРёСЃРєР° РЅР° СЃРѕР±С‹С‚РёСЏ Р±СЌРєРµРЅРґР°.
   useEffect(() => {
-    document.documentElement.toggleAttribute("data-proxy-on", proxyEnabled);
-  }, [proxyEnabled]);
-
-  useEffect(() => {
-    if (prevProxyRef.current === null) {
-      prevProxyRef.current = proxyEnabled;
+    try {
+      const off = EventsOn("state-changed", () => {
+        void refresh();
+      });
+      return () => {
+        if (typeof off === "function") off();
+      };
+    } catch {
       return;
     }
-    if (prevProxyRef.current !== proxyEnabled) {
-      playSoftChime("toggle");
-    }
-    prevProxyRef.current = proxyEnabled;
-  }, [proxyEnabled]);
+  }, [refresh]);
+
+  const proxyEnabled = !!uiState?.proxyEnabled;
+  const dpiEnabled = !!uiState?.dpiEnabled;
+  const proxyRunning = proxyEnabled && !!health?.proxyLocalOk;
+  const dpiRunning = dpiEnabled && !!health?.dpiRunning;
+
+  const proxyPhase: "idle" | "connecting" | "connected" = proxyRunning
+    ? "connected"
+    : proxyEnabled
+      ? "connecting"
+      : "idle";
 
   useEffect(() => {
-    if (!proxyEnabled) {
-      setSpeedHistory([]);
-    }
-  }, [proxyEnabled]);
+    connectedRef.current = proxyRunning;
+  }, [proxyRunning]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const ms =
-      toast.variant === "error" && toast.openLogs ? 8000 : toast.variant === "error" ? 6000 : 3200;
-    const t = setTimeout(() => setToast(null), ms);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  useEffect(() => {
-    if (localStorage.getItem(ONBOARDING_KEY) === "1") return;
-    const t = setTimeout(() => setShowOnboarding(true), 500);
-    return () => clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("pulseshield.theme", theme);
-    const a = localStorage.getItem("pulseshield.accentHex");
-    if (a && /^#[0-9a-fA-F]{6}$/.test(a)) {
-      applyAccentHex(a);
-    }
-  }, [theme]);
-
-  useEffect(() => {
-    const applyRt = (raw: Record<string, unknown>) => {
-      setRt(raw as typeof rt);
-      const total = (Number(raw.downloadBps) || 0) + (Number(raw.uploadBps) || 0);
-      setSpeedHistory((prev) => [...prev.slice(-59), total]);
-    };
-    void GetRealtimeStats()
-      .then((s) => applyRt(s as unknown as Record<string, unknown>))
-      .catch(() => {});
-    const off = EventsOn("realtime-stats", (json: string) => {
-      try {
-        applyRt(JSON.parse(json) as Record<string, unknown>);
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => off();
-  }, []);
-
-  const lastHealthRef = useRef<string>("");
-  const pollHealth = useCallback(async () => {
+  const withBusy = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | null> => {
+    setBusy(true);
     try {
-      const h = await GetServiceHealth();
-      const key = JSON.stringify(h);
-      if (key !== lastHealthRef.current) {
-        lastHealthRef.current = key;
-        setHealth(h);
-      }
-    } catch {}
-  }, []);
-  const pollHealthRef = useRef(pollHealth);
-  pollHealthRef.current = pollHealth;
-
-  useEffect(() => {
-    void pollHealth();
-    const id = setInterval(pollHealth, 4000);
-    return () => clearInterval(id);
-  }, [pollHealth]);
-
-  useEffect(() => {
-    const off = EventsOn("dpi-connectivity", () => {
-      void GetServiceHealth().then(setHealth).catch(() => {});
-    });
-    return () => off();
-  }, []);
-
-  // Восстановление после выхода из сна: бэкенд шлёт "system-resumed".
-  // WebView2 после сна может «залипнуть» — принудительно обновляем данные и,
-  // если документ перестал отвечать (GPU/контекст потерян), мягко перезагружаем UI.
-  useEffect(() => {
-    const off = EventsOn("system-resumed", () => {
-      // Перезапрашиваем состояние и здоровье (фоновые таймеры могли встать).
-      lastHealthRef.current = "";
-      void GetServiceHealth().then(setHealth).catch(() => {});
-      void refreshState();
-      void GetRealtimeStats().then((s) => setRt(s as typeof rt)).catch(() => {});
-      // Если за 1.5с после resume рендер не ожил — перезагрузить webview (состояние с бэкенда).
-      const probe = document.documentElement;
-      const before = probe.clientHeight;
-      window.setTimeout(() => {
-        try {
-          if (document.hidden || probe.clientHeight === 0 || before === 0) {
-            window.location.reload();
-          }
-        } catch {
-          window.location.reload();
-        }
-      }, 1500);
-    });
-    return () => off();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (active !== "settings") return;
-    setThemeDraft(theme);
-    const a = localStorage.getItem("pulseshield.accentHex");
-    if (a && /^#[0-9a-fA-F]{6}$/.test(a)) {
-      setAccentDraft(a);
+      const res = await fn();
+      await refresh();
+      return res;
+    } catch (e: unknown) {
+      notify(String(e instanceof Error ? e.message : e), "error");
+      return null;
+    } finally {
+      setBusy(false);
     }
-  }, [active, theme]);
+  }, [notify, refresh]);
 
-  const dpiResyncDoneRef = useRef(false);
-  useEffect(() => {
-    if (active !== "dpi") return;
-    if (dpiResyncDoneRef.current) return; // only once per session
-    dpiResyncDoneRef.current = true;
-    ResyncDPIProfilesFromDisk()
-      .then(() => void refreshState())
-      .catch(() => {});
-  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setProxy = useCallback(
+    async (on: boolean) => {
+      await withBusy(async () => {
+        await SetProxyEnabled(on);
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
 
-  useEffect(() => {
-    if (active !== "logs") return;
-    const pollLogs = async () => {
-      try {
-        const l = await GetLogsState();
-        setLogs(l as typeof logs);
-      } catch {}
-    };
-    pollLogs();
-    const id = setInterval(pollLogs, 3000);
-    return () => clearInterval(id);
-  }, [active]);
+  const setDpi = useCallback(
+    async (on: boolean) => {
+      await withBusy(async () => {
+        await SetDPIEnabled(on);
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
 
-  async function refreshState() {
+  const stopAll = useCallback(async () => {
+    await withBusy(async () => {
+      await SetProxyEnabled(false);
+      await SetDPIEnabled(false);
+      await ApplyRuntime();
+    });
+  }, [withBusy]);
+
+  const setRouting = useCallback(
+    async (name: string) => {
+      await withBusy(() => SetRoutingProfile(name));
+    },
+    [withBusy]
+  );
+
+  const addRule = useCallback(
+    async (pattern: string, target: string) => {
+      await withBusy(async () => {
+        await AddUserRoutingRule(pattern, target);
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
+
+  const removeRule = useCallback(
+    async (index: number) => {
+      await withBusy(async () => {
+        await RemoveUserRoutingRuleAt(index);
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
+
+  const verifyTarget = useCallback(async (q: string) => {
     try {
-      const s = await GetUIState();
-      setUiState(s);
-      const st = s as unknown as Record<string, unknown>;
-      setProxyEnabledState(!!st.proxyEnabled);
-      setDpiEnabledState(!!st.dpiEnabled);
-    } catch {}
-  }
-
-  const refreshStateRef = useRef(() => {
-    void refreshState();
-  });
-  refreshStateRef.current = () => void refreshState();
-
-  useEffect(() => {
-    const offApply = EventsOn("runtime-apply", (json: string) => {
-      let o: { done?: boolean; error?: string; job?: number };
-      try {
-        o = JSON.parse(json);
-      } catch {
-        return;
-      }
-      if (!o?.done) return;
-      void pollHealthRef.current();
-      if (!waitingDeferredApplyRef.current) return;
-      if (o.job != null && Number(o.job) !== proxyDeferJobExpectedRef.current) {
-        return;
-      }
-      waitingDeferredApplyRef.current = false;
-      if (proxyApplyDeadlineRef.current != null) {
-        window.clearTimeout(proxyApplyDeadlineRef.current);
-        proxyApplyDeadlineRef.current = null;
-      }
-      proxyDeferJobExpectedRef.current = 0;
-      const err = typeof o.error === "string" ? o.error.trim() : "";
-      if (err) {
-        setProxyPhase("error");
-        notify(humanizeRuntimeError(err), "error", true);
-      } else {
-        setProxyPhase("idle");
-      }
-      void refreshStateRef.current();
-    });
-    const offWatch = EventsOn("runtime-watchdog", (json: string) => {
-      waitingDeferredApplyRef.current = false;
-      proxyDeferJobExpectedRef.current = 0;
-      if (proxyApplyDeadlineRef.current != null) {
-        window.clearTimeout(proxyApplyDeadlineRef.current);
-        proxyApplyDeadlineRef.current = null;
-      }
-      setProxyPhase("idle");
-      let detail = "";
-      try {
-        const o = JSON.parse(json) as { reason?: string; detail?: string };
-        detail = (o.detail || o.reason || "").trim();
-      } catch {
-        /* ignore */
-      }
-      notify(
-        detail
-          ? `Восстановление после зависания сетевого режима: ${detail}`
-          : "Восстановление после зависания сетевого режима — прокси и DPI остановлены.",
-        "error",
-        true,
-      );
-      void refreshStateRef.current();
-    });
-    const offLic = EventsOn("license-applied", () => {
-      void refreshStateRef.current();
-    });
-    return () => {
-      offApply();
-      offWatch();
-      offLic();
-    };
+      const { VerifyRouteTarget } = await import("../../wailsjs/go/main/App");
+      return (await VerifyRouteTarget(q)) as unknown as Any;
+    } catch (e: unknown) {
+      notify(String(e instanceof Error ? e.message : e), "error");
+      return null;
+    }
   }, [notify]);
 
-  async function setProxy(enabled: boolean) {
-    setProxyEnabledState(enabled);
-    setProxyPhase("connecting");
-    waitingDeferredApplyRef.current = true;
-    if (proxyApplyDeadlineRef.current != null) {
-      window.clearTimeout(proxyApplyDeadlineRef.current);
-      proxyApplyDeadlineRef.current = null;
-    }
-    proxyApplyDeadlineRef.current = window.setTimeout(() => {
-      proxyApplyDeadlineRef.current = null;
-      if (!waitingDeferredApplyRef.current) return;
-      waitingDeferredApplyRef.current = false;
-      proxyDeferJobExpectedRef.current = 0;
-      setProxyPhase("error");
-      notify("Таймаут применения прокси — проверьте лог ядра и попробуйте снова.", "error", true);
-      void refreshState();
-    }, 56000);
+  const selectServer = useCallback(
+    async (id: string) => {
+      await withBusy(() => SetActiveServer(id));
+    },
+    [withBusy]
+  );
 
+  const removeServerFn = useCallback(
+    async (id: string) => {
+      await withBusy(() => RemoveServer(id));
+    },
+    [withBusy]
+  );
+
+  const retestAll = useCallback(async () => {
+    await withBusy(async () => {
+      const ids = ((uiState?.servers as Any[]) || []).map((s) => String(s.id || ""));
+      if (ids.length) await RetestServersBatch(ids);
+    });
+  }, [withBusy, uiState]);
+
+  const previewSubscription = useCallback(async (url: string) => {
     try {
-      await SetProxyEnabled(enabled);
-      const job = await ApplyRuntimeDeferred();
-      proxyDeferJobExpectedRef.current = Number(job) || 0;
+      return (await PreviewSubscription(url)) as unknown as Any;
     } catch (e: unknown) {
-      waitingDeferredApplyRef.current = false;
-      proxyDeferJobExpectedRef.current = 0;
-      if (proxyApplyDeadlineRef.current != null) {
-        window.clearTimeout(proxyApplyDeadlineRef.current);
-        proxyApplyDeadlineRef.current = null;
-      }
-      setProxyPhase("error");
-      notify(formatRuntimeFailure("Прокси", e), "error", true);
-      await refreshState();
+      notify(String(e instanceof Error ? e.message : e), "error");
+      return null;
     }
-  }
+  }, [notify]);
 
-  async function setDpi(enabled: boolean) {
-    setDpiEnabledState(enabled);
-    await withBusy("Применяю DPI и конфигурацию…", async () => {
-      try {
-        await SetDPIEnabled(enabled);
+  const importText = useCallback(
+    async (text: string) => {
+      const n = await withBusy(() => ImportServersFromText(text));
+      return typeof n === "number" ? n : 0;
+    },
+    [withBusy]
+  );
+
+  const importFromClipboard = useCallback(async () => {
+    await withBusy(() => ImportServerFromClipboard());
+  }, [withBusy]);
+
+  const applySubscription = useCallback(
+    async (url: string) => {
+      await withBusy(async () => {
+        await SetSubscriptionURL(url);
+        await RefreshSubscription();
         await ApplyRuntime();
-        await refreshState();
-        await pollHealthRef.current();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("DPI", e);
-        notify(line, "error", true);
-        await refreshState();
-        await pollHealthRef.current();
-      }
-    });
-  }
+      });
+    },
+    [withBusy]
+  );
 
-  async function setRouting(name: string) {
-    await withBusy("Переключаю профиль маршрутизации…", async () => {
-      try {
-        await SetRoutingProfile(name);
-        await ApplyRuntime();
-        notify("Профиль маршрутизации переключён и применён к ядру");
-        await refreshState();
-        await pollHealthRef.current();
-      } catch (e: unknown) {
-        notify(`Ошибка выбора профиля маршрутизации: ${String(e)}`, "error");
-      }
-    });
-  }
+  const refreshSubscriptionFn = useCallback(async () => {
+    await withBusy(() => RefreshSubscription());
+  }, [withBusy]);
 
-  async function setActiveServer(id: string) {
-    const st = uiState as Record<string, unknown> | null;
-    const srvs = (st?.servers as unknown[]) ?? [];
-    const sel = (srvs as Record<string, unknown>[]).find((x) => x.id === id);
-    if (sel?.premium && !(st as Record<string, unknown>)?.licenseActive) {
-      notify("Этот узел отмечен как Premium от авторов — активируйте поддержку на вкладке «Поддержка».", "error");
-      return;
+  const clearSubscriptionFn = useCallback(async () => {
+    await withBusy(() => ClearSubscription());
+  }, [withBusy]);
+
+  const loadDpiLists = useCallback(async () => {
+    try {
+      setDpiLists(((await GetAvailableDpiLists()) || []) as unknown as Any[]);
+    } catch {
+      setDpiLists([]);
     }
-    await withBusy("Переключаю сервер и ядро…", async () => {
-      try {
-        await SetActiveServer(id);
-        const s = await GetUIState();
-        if ((s as unknown as Record<string, unknown>).proxyEnabled) {
-          await ApplyRuntime();
-        }
-        notify("Активный сервер обновлён");
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Сервер", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
+  }, []);
 
-  async function removeServer(id: string) {
-    if (!window.confirm("Удалить этот сервер из списка?")) return;
-    await withBusy("Удаляю сервер и применяю конфигурацию…", async () => {
-      try {
-        await RemoveServer(id);
-        await ApplyRuntime();
-        notify("Сервер удалён, конфигурация применена");
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Удаление сервера", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
+  useEffect(() => {
+    void loadDpiLists();
+  }, [loadDpiLists]);
 
-  async function setActiveDPI(name: string) {
-    await withBusy("Переключаю профиль DPI…", async () => {
-      try {
+  const toggleDpiList = useCallback(
+    async (name: string, on: boolean) => {
+      await withBusy(async () => {
+        await ToggleDpiList(name, on);
+        setDpiLists(((await GetAvailableDpiLists()) || []) as unknown as Any[]);
+      });
+    },
+    [withBusy]
+  );
+
+  const readDpiList = useCallback(async (name: string) => {
+    try {
+      return (await GetDpiListContent(name)) as unknown as Any;
+    } catch (e: unknown) {
+      notify(String(e instanceof Error ? e.message : e), "error");
+      return null;
+    }
+  }, [notify]);
+
+  const writeDpiList = useCallback(
+    async (name: string, entries: string[]) => {
+      await withBusy(() => SetDpiListContent(name, entries));
+    },
+    [withBusy]
+  );
+
+  const runDpiTuning = useCallback(async () => {
+    const res = await withBusy(async () => {
+      notify("РџРѕРґР±РёСЂР°СЋ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ РѕР±С…РѕРґР° вЂ” СЌС‚Рѕ РјРѕР¶РµС‚ Р·Р°РЅСЏС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РјРёРЅСѓС‚вЂ¦");
+      return await RunDpiAdaptiveTuning(false);
+    });
+    if (res) setDpiTune(res as unknown as Any);
+    if (res) notify("РџРѕРґР±РѕСЂ Р·Р°РІРµСЂС€С‘РЅ");
+    return (res as unknown as Any) || null;
+  }, [notify, withBusy]);
+
+  const setDpiProfile = useCallback(
+    async (name: string) => {
+      await withBusy(async () => {
         await SetActiveDPIProfile(name);
         await ApplyRuntime();
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Профиль DPI", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
+      });
+    },
+    [withBusy]
+  );
 
-  async function runDpiAdaptiveTuning(opts?: { gamingLua?: boolean }) {
-    const gamingLua = opts?.gamingLua ?? dpiTuneGamingLua;
-    await withBusy("Диагностика DPI и проверка доступа к сервисам…", async () => {
-      try {
-        const r = await RunDpiAdaptiveTuning(gamingLua);
-        setDpiTuneResult(r);
-        if (r.message) {
-          notify(r.message, r.newProfileName ? "info" : "error", r.newProfileName ? undefined : true);
-        }
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Автоподбор DPI", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
-
-  async function runRetestServersBatch(ids: string[]) {
-    const clean = ids.map((id) => String(id || "").trim()).filter(Boolean);
-    if (clean.length === 0) {
-      notify("Нет серверов для проверки", "error");
-      return;
-    }
-    await withBusy(`Тестирую скорость и пинг (${clean.length} узлов)…`, async () => {
-      try {
-        await RetestServersBatch(clean);
-        notify(`Тест скорости завершён (${clean.length} узлов)`);
-        await refreshState();
-      } catch (e: unknown) {
-        notify(formatRuntimeFailure("Проверка серверов", e), "error");
-      }
-    });
-  }
-
-  async function runRetestSingleServer(id: string) {
-    const clean = String(id || "").trim();
-    if (!clean || testingServerId) return;
-    setTestingServerId(clean);
+  const runSelfCheckFn = useCallback(async () => {
+    setBusy(true);
     try {
-      await RetestServersBatch([clean]);
-      const s = await GetUIState();
-      setUiState(s);
-      const st = s as unknown as Record<string, unknown>;
-      const srvs = (st?.servers as Record<string, unknown>[]) ?? [];
-      const found = srvs.find((x) => x.id === clean);
-      if (found) {
-        if (found.lastCheckOk) {
-          const mbps = Number(found.lastCheckDownloadMbps) || 0;
-          notify(`${found.name}: ${found.lastCheckLatencyMs} ms${mbps > 0 ? ` · ~${mbps.toFixed(0)} Мбит/с` : ""}`);
-        } else {
-          notify(`${found.name}: сервер не ответил`, "error");
-        }
-      } else {
-        notify("Сервер проверен");
-      }
+      setSelfCheck(await RunSelfCheckText());
     } catch (e: unknown) {
-      notify(formatRuntimeFailure("Проверка сервера", e), "error");
+      notify(String(e instanceof Error ? e.message : e), "error");
     } finally {
-      setTestingServerId(null);
+      setBusy(false);
     }
-  }
+  }, [notify]);
 
-  async function refreshSubscriptionServers(url: string) {
-    if (!url.trim()) {
-      notify("Укажите Subscription URL", "error");
-      return;
-    }
-    await withBusy("Обновляю подписку и проверяю серверы…", async () => {
-      try {
-        await SetSubscriptionURL(url.trim());
-        await RefreshSubscription();
-        notify("Подписка обновлена, список серверов загружен");
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Подписка", e);
-        notify(line, "error", true);
-      }
-    });
-  }
-
-  async function importServerFromClipboard() {
-    await withBusy("Импортирую из буфера обмена…", async () => {
-      try {
-        await ImportServerFromClipboard();
-        await refreshState();
-        notify("Импорт из буфера выполнен (vless:// или ссылка подписки)");
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Импорт из буфера", e);
-        notify(line, "error");
-      }
-    });
-  }
-
-  async function clearSubscriptionFromConfig() {
-    if (!window.confirm("Удалить подписку и все узлы из неё? Одиночные ключи останутся.")) return;
-    await withBusy("Удаляю подписку…", async () => {
-      try {
-        await ClearSubscription();
-        notify("Подписка удалена из конфигурации");
-        await refreshState();
-      } catch (e: unknown) {
-        notify(formatRuntimeFailure("Подписка", e), "error");
-      }
-    });
-  }
-
-  async function addServerFromInput(vlessUrl: string) {
-    if (!vlessUrl.trim()) return;
-    await withBusy("Добавляю сервер…", async () => {
-      try {
-        await AddVLESS(vlessUrl.trim());
-        notify("Сервер добавлен из VLESS");
-        await refreshState();
-      } catch (e: unknown) {
-        notify(`Ошибка добавления сервера: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function resetRoutingToRfSmart() {
-    await withBusy("Сбрасываю профиль на rf-smart-split…", async () => {
-      try {
-        await SetRoutingProfile("rf-smart-split");
-        await ApplyRuntime();
-        notify("Активен профиль «РФ: умный сплит»");
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Маршрутизация", e);
-        notify(line, "error");
-      }
-    });
-  }
-
-  async function importRouting() {
-    await withBusy("Импортирую маршрутизацию…", async () => {
-      try {
-        const f = await OpenRoutingJSON();
-        if (!f) return;
-        await ApplyRoutingJSON((f as { content: string }).content);
-        notify(`Маршрутизация импортирована из ${(f as { path: string }).path}`);
-        if (proxyEnabled) {
-          await ApplyRuntime();
-        }
-        await refreshState();
-      } catch (e: unknown) {
-        notify(`Ошибка импорта маршрутизации: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function exportRouting() {
-    await withBusy("Сохраняю JSON маршрутизации…", async () => {
-      try {
-        const s = await GetUIState();
-        const st = s as unknown as Record<string, unknown>;
-        const uniq = uniqueRoutingProfiles(st.routingProfiles as unknown[]);
-        const p = uniq.find((x: unknown) => (x as Record<string, unknown>).name === st.routingProfile) || uniq[0];
-        if (!p) {
-          notify("Нет профиля для экспорта", "error");
-          return;
-        }
-        const json = JSON.stringify(p, null, 2);
-        const pathOut = await SaveRoutingJSON(json);
-        if (!pathOut) return;
-        notify(`Маршрутизация экспортирована: ${pathOut}`);
-      } catch (e: unknown) {
-        notify(`Ошибка экспорта маршрутизации: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function importDpiConfig() {
-    await withBusy("Импортирую DPI-конфиг…", async () => {
-      try {
-        const p = await ImportDPIConfig();
-        if (!p) return;
-        notify(`DPI-конфиг импортирован: ${p}`);
-        await refreshState();
-      } catch (e: unknown) {
-        notify(`Ошибка импорта DPI: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function stopAll() {
-    await withBusy("Останавливаю все сервисы…", async () => {
-      try {
-        await StopAll();
-        setProxyEnabledState(false);
-        setDpiEnabledState(false);
-        notify("Все сервисы остановлены");
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Стоп всё", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
-
-  async function loadGuide() {
+  const exportBundle = useCallback(async () => {
     try {
-      const txt = await ProgramGuide();
-      setGuideText(txt);
-      setActive("guide");
+      const p = await CreateDiagnosticsBundle();
+      notify(`РђСЂС…РёРІ СЃРѕС…СЂР°РЅС‘РЅ: ${p}`);
     } catch (e: unknown) {
-      notify(`Ошибка загрузки справочника: ${String(e)}`, "error");
+      notify(String(e instanceof Error ? e.message : e), "error");
     }
-  }
+  }, [notify]);
 
-  async function clearLogFiles() {
-    await withBusy("Очищаю файлы логов…", async () => {
-      try {
-        await ClearLogFiles();
-        const l = await GetLogsState();
-        setLogs(l as typeof logs);
-        notify("Файлы логов на диске очищены");
-        playSoftChime("success");
-      } catch (e: unknown) {
-        notify(`Очистка логов: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function refreshLogs() {
-    try {
-      const l = await GetLogsState();
-      setLogs(l as typeof logs);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function runSelfCheck() {
-    setSelfCheckBusy(true);
-    setDiagText("Самопроверка выполняется (обычно несколько секунд, не мгновенно)…");
-    notify("Самопроверка запущена — дождитесь результата.");
-    try {
-      const t = await RunSelfCheckText();
-      setDiagText(t);
-      notify("Самопроверка завершена");
-    } catch (e: unknown) {
-      setDiagText("");
-      notify(`Ошибка самопроверки: ${String(e)}`, "error");
-    } finally {
-      setSelfCheckBusy(false);
-    }
-  }
-
-  async function createBundle() {
-    await withBusy("Создаю диагностический архив…", async () => {
-      try {
-        const p = await CreateDiagnosticsBundle();
-        notify(`Диагностический архив создан: ${p}`);
-      } catch (e: unknown) {
-        notify(`Ошибка создания архива: ${String(e)}`, "error");
-      }
-    });
-  }
-
-  async function runUpdateCheck() {
-    await withBusy("Проверяю обновления на GitHub…", async () => {
-      try {
-        const info = await GetUpdateInfo();
-        setUpdateInfo({
-          ok: !!info.ok,
-          releaseUrl: info.releaseUrl || "",
-          downloadUrl: info.downloadUrl || "",
-          installerDownloadUrl: info.installerDownloadUrl || "",
-          upToDate: !!info.upToDate,
-          latestTag: info.latestTag || "",
-        });
-        const msg = info.message || (info.upToDate ? `У вас актуальная версия (${appVersion})` : `Доступна новая версия: ${info.latestTag}`);
-        setUpdateHint(msg);
-        if (info.ok) {
-          if (!info.upToDate) {
-            playSoftChime("success");
-          }
-          notify(msg, "info");
-        } else {
-          notify(msg, "error");
-        }
-      } catch (e: unknown) {
-        const errMsg = `Ошибка проверки обновлений: ${String(e)}`;
-        setUpdateInfo(null);
-        setUpdateHint(errMsg);
-        notify(errMsg, "error");
-      }
-    });
-  }
-
-  async function runAutoUpdate() {
-    if (!updateInfo?.downloadUrl && !updateInfo?.installerDownloadUrl) return;
-    const targetUrl = updateInfo.downloadUrl?.toLowerCase().endsWith(".zip")
-      ? updateInfo.downloadUrl
-      : updateInfo.installerDownloadUrl || updateInfo.downloadUrl;
-    setGlobalBusy("Скачивание обновления…");
-    try {
-      await ApplyAutoUpdate(targetUrl);
-    } catch (e: unknown) {
-      notify(`Обновление: ${String(e)}`, "error");
-    } finally {
-      setGlobalBusy(null);
-    }
-  }
-
-  async function runInstallerUpdate() {
-    if (!updateInfo?.installerDownloadUrl) return;
-    setGlobalBusy("Скачивание установщика…");
-    try {
-      await ApplyAutoUpdate(updateInfo.installerDownloadUrl);
-    } catch (e: unknown) {
-      notify(`Установщик: ${String(e)}`, "error");
-    } finally {
-      setGlobalBusy(null);
-    }
-  }
-
-  async function applyVisualSettings(themeVal: ThemeKey, accent: string) {
-    await withBusy("Применяю тему и акцент…", async () => {
-      await new Promise((r) => setTimeout(r, 220));
-      setTheme(themeVal);
-      setThemeDraft(themeVal);
-      localStorage.setItem("pulseshield.theme", themeVal);
-      localStorage.setItem("pulseshield.accentHex", accent);
-      setAccentDraft(accent);
-      applyAccentHex(accent);
-      playSoftChime("success");
-      setToast({ text: "Тема и акцент применены", variant: "info", dismissible: true });
-    });
-  }
-
-  async function applyProxyPort(port: number) {
-    const p = Math.floor(Number(port));
-    if (p < 1 || p > 65535) {
-      notify("Порт должен быть от 1 до 65535", "error");
-      return;
-    }
-    await withBusy("Меняю порт и перезапускаю ядро…", async () => {
-      try {
+  const applyProxyPort = useCallback(
+    async (p: number) => {
+      await withBusy(async () => {
         await SetProxyPort(p);
         await ApplyRuntime();
-        notify(`Порт локального прокси: ${p}. Переподключите приложения при необходимости.`);
-        await refreshState();
-      } catch (e: unknown) {
-        const line = formatRuntimeFailure("Порт / ядро", e);
-        notify(line, "error", true);
-        await refreshState();
-      }
-    });
-  }
+      });
+    },
+    [withBusy]
+  );
 
-  async function saveDnsAndApply(preset: string, primary: string, secondary: string) {
-    await withBusy("Применяю DNS к адаптерам…", async () => {
-      try {
+  const applyDns = useCallback(
+    async (preset: string, primary: string, secondary: string) => {
+      await withBusy(async () => {
         await SetDnsSettings(preset, primary, secondary);
-        await ApplyDnsNow();
-        const label = preset === "dhcp" ? "Авто (DHCP)" : preset === "xbox" ? "Xbox DNS" : "Свои DNS";
-        notify(`Настройки DNS «${label}» применены к активным адаптерам.`);
-        await refreshState();
-      } catch (e: unknown) {
-        notify(`DNS: ${String(e)}`, "error");
-      }
-    });
-  }
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
 
-  async function saveTelegramMeta(url: string, name: string) {
-    await withBusy("Сохраняю настройки Telegram…", async () => {
-      try {
-        await SetTelegramInfoURL(url);
-        await SetTelegramChannelName(name);
-        notify("Ссылка и название Telegram сохранены");
-        await refreshState();
-      } catch (e: unknown) {
-        notify(String(e), "error");
-      }
-    });
-  }
+  const activateLicense = useCallback(
+    async (code: string) => {
+      await withBusy(() => ActivateLicense(code));
+      notify("Ключ применён");
+    },
+    [notify, withBusy]
+  );
 
-  async function activateFromBotLink(raw: string) {
-    let parsed: { code: string; apiBase?: string };
+  const checkUpdates = useCallback(async () => {
+    setBusy(true);
     try {
-      parsed = parseActivationPaste(raw);
+      await CheckForUpdates();
+      setUpdateInfo((await GetUpdateInfo()) as unknown as Any);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), "error");
+      notify(String(e instanceof Error ? e.message : e), "error");
+    } finally {
+      setBusy(false);
+    }
+  }, [notify]);
+
+  const installUpdate = useCallback(async () => {
+    const url = String((updateInfo as Any)?.installerDownloadUrl || "");
+    if (!url) {
+      notify("Ссылка на установщик не получена", "error");
       return;
     }
-    await withBusy("Активирую лицензию…", async () => {
-      try {
-        if (parsed.apiBase?.trim()) {
-          await SetLicenseAPIBase(parsed.apiBase.trim());
-        }
-        await ActivateLicense(parsed.code);
-        notify("Лицензия активирована.");
-        await refreshState();
-      } catch (e: unknown) {
-        notify(e instanceof Error ? e.message : String(e), "error");
-      }
+    await withBusy(() => ApplyAutoUpdate(url));
+  }, [notify, updateInfo, withBusy]);
+
+  const clearLogs = useCallback(async () => {
+    await withBusy(() => ClearLogFiles());
+  }, [withBusy]);
+
+  const openLogsFolderFn = useCallback(async () => {
+    try {
+      await OpenLogsFolder();
+    } catch (e: unknown) {
+      notify(String(e instanceof Error ? e.message : e), "error");
+    }
+  }, [notify]);
+
+  const quit = useCallback(() => {
+    void RequestQuit().catch(() => {
+      /* всё равно закрываемся */
     });
-  }
+  }, []);
 
-  // Derived / computed
-  const rtChartId = useId().replace(/:/g, "");
-
-  const chartSmooth = useMemo(() => {
-    const h = speedHistory;
-    if (h.length === 0) return [];
-    if (h.length < 3) return h.slice();
-    return h.map((v, i) => {
-      const prev = h[i - 1] ?? v;
-      const next = h[i + 1] ?? v;
-      return (prev + v + next) / 3;
+  const closeToTray = useCallback(() => {
+    void CloseToTray().catch(() => {
+      void import("../../wailsjs/runtime/runtime").then((m) => m.WindowHide());
     });
-  }, [speedHistory]);
+  }, []);
 
-  const chartPaths = useMemo(() => {
-    if (chartSmooth.length === 0) {
-      return { linePath: "", areaPath: "", max: 1 };
-    }
-    const max = Math.max(...chartSmooth, 1) * 0.62;
-    const n = chartSmooth.length;
-    const pts: ChartPt[] = chartSmooth.map((v, i) => {
-      const x = (i / Math.max(n - 1, 1)) * 100;
-      const y = 100 - (v / max) * 84 - 10;
-      return { x, y };
-    });
-    const curves = cubicBezierSegmentsThroughPoints(pts, DEEP_FLOW_TENSION);
-    const linePath = `M ${pts[0].x},${pts[0].y}${curves}`;
-    const areaPath = `M 0,100 L ${pts[0].x},${pts[0].y}${curves} L 100,100 Z`;
-    return { linePath, areaPath, max };
-  }, [chartSmooth]);
+  const servers = useMemo(() => ((uiState?.servers as Any[]) || []), [uiState]);
+  const activeServer = useMemo(() => {
+    const id = String(uiState?.activeServerId || "");
+    return servers.find((s) => String(s.id) === id) || null;
+  }, [servers, uiState]);
 
-  const busy = !!globalBusy;
-
-  const routingProfilesUnique = useMemo(
-    () => uniqueRoutingProfiles((uiState as Record<string, unknown> | null)?.routingProfiles as unknown[]),
-    [(uiState as Record<string, unknown> | null)?.routingProfiles],
-  );
-
-  const activeRoutingProfileMeta = useMemo(() => {
-    const st = uiState as Record<string, unknown> | null;
-    if (!routingProfilesUnique.length || !st?.routingProfile) return null;
-    const target =
-      st.routingProfile === "bypass-russia"
-        ? "rf-smart-split"
-        : st.routingProfile === "all-proxy"
-        ? "default"
-        : st.routingProfile;
-    return (
-      routingProfilesUnique.find((x: unknown) => {
-        const name = (x as Record<string, unknown>).name;
-        return name === st.routingProfile || name === target;
-      }) || null
-    );
-  }, [(uiState as Record<string, unknown> | null)?.routingProfile, routingProfilesUnique]);
-
-  const serverStats = useMemo(() => {
-    const st = uiState as Record<string, unknown> | null;
-    const servers = Array.isArray(st?.servers) ? (st as Record<string, unknown[]>).servers : [];
-    const recommended = (servers as Record<string, unknown>[]).filter((s) => s?.recommended).length;
-    const online = (servers as Record<string, unknown>[]).filter((s) => s?.lastCheckOk).length;
-    const subscription = (servers as Record<string, unknown>[]).filter((s) => s?.fromSubscription).length;
-    const manual = servers.length - subscription;
-    return { total: servers.length, recommended, online, subscription, manual };
-  }, [(uiState as Record<string, unknown> | null)?.servers]);
-
-  const sortedServers = useMemo(() => {
-    const st = uiState as Record<string, unknown> | null;
-    const servers = Array.isArray(st?.servers) ? [...(st as Record<string, unknown[]>).servers] : [];
-    return (servers as Record<string, unknown>[]).sort((a, b) => {
-      const aPing = Number(a?.lastCheckLatencyMs || Number.MAX_SAFE_INTEGER);
-      const bPing = Number(b?.lastCheckLatencyMs || Number.MAX_SAFE_INTEGER);
-      if (aPing !== bPing) return aPing - bPing;
-      const aSpeed = Number(a?.lastCheckDownloadMbps || 0);
-      const bSpeed = Number(b?.lastCheckDownloadMbps || 0);
-      return bSpeed - aSpeed;
-    });
-  }, [(uiState as Record<string, unknown> | null)?.servers]);
-
-  const manualServers = useMemo(
-    () => sortedServers.filter((s: unknown) => !(s as Record<string, unknown>)?.fromSubscription),
-    [sortedServers],
-  );
-  const subscriptionServers = useMemo(
-    () => sortedServers.filter((s: unknown) => (s as Record<string, unknown>)?.fromSubscription),
-    [sortedServers],
-  );
-
-  const dashboardHints = useMemo(() => {
-    const out: { key: string; text: string; nav: NavKey }[] = [];
-    const st = uiState as Record<string, unknown> | null;
-    const h = health as Record<string, unknown> | null;
-    if (!st) return out;
-    const servers = (st.servers as unknown[]) || [];
-    if (servers.length === 0) {
-      out.push({ key: "no-vless", text: "Добавьте VLESS-сервер — без него прокси не сможет построить туннель.", nav: "servers" });
-    } else if (proxyEnabled && !st.activeServerId) {
-      out.push({ key: "no-active", text: "Выберите активный сервер в списке на вкладке «Серверы».", nav: "servers" });
-    }
-    if (h && proxyEnabled && h.vlessRemote && h.vlessRemote !== "ok" && !String(h.vlessRemote).includes("нет активного")) {
-      out.push({ key: "vless-bad", text: "Прокси включён, но до VLESS-сервера нет TCP — проверьте интернет, хост и порт.", nav: "servers" });
-    }
-    if (h && dpiEnabled && !h.dpiRunning) {
-      out.push({ key: "dpi-down", text: "DPI включён в настройках, но процесс не найден — смотрите логи DPI или запуск от администратора.", nav: "logs" });
-    }
-    if (h?.dpiEnabled && h?.dpiRunning && h?.dpiConnectivityWarn) {
-      out.push({
-        key: "dpi-probe-warn",
-        text: "Проверка DPI (generate_204) не прошла — возможно, провайдер подкрутил фильтрацию. Откройте вкладку DPI и запустите автоподбор заново.",
-        nav: "dpi",
-      });
-    }
-    if (h && !proxyEnabled && h.proxyPortOccupied) {
-      out.push({ key: "port-occupied", text: "Прокси выключен, но порт всё ещё слушает — смените порт в настройках или перезапустите приложение.", nav: "settings" });
-    }
-    return out.slice(0, 2);
-  }, [uiState, health, proxyEnabled, dpiEnabled]);
-
-  const showVlessProtectedStrip = useMemo(() => {
-    const h = health as Record<string, unknown> | null;
-    return !!(h && h.proxyEnabled && h.proxyLocalOk && h.vlessRemote === "ok");
-  }, [health]);
-
-  const value: AppContextValue = {
-    active,
-    setActive,
-    proxyEnabled,
-    dpiEnabled,
-    uiState,
-    health,
-    rt,
-    speedHistory,
-    logs,
-    appVersion,
-    updateHint,
-    updateInfo,
-    theme,
-    setTheme,
-    accentDraft,
-    setAccentDraft,
-    themeDraft,
-    setThemeDraft,
-    busy,
-    proxyPhase,
-    toast,
-    setToast,
-    showOnboarding,
-    setShowOnboarding,
-    globalBusy,
-    selfCheckBusy,
-    testingServerId,
-    dpiTuneGamingLua,
-    setDpiTuneGamingLua,
-    dpiTuneResult,
-    notify,
-    refreshState,
-    pollHealth,
-    setProxy,
-    setDpi,
-    setRouting,
-    setActiveServer,
-    removeServer,
-    setActiveDPI,
-    runDpiAdaptiveTuning,
-    runRetestServersBatch,
-    runRetestSingleServer,
-    refreshSubscriptionServers,
-    importServerFromClipboard,
-    clearSubscriptionFromConfig,
-    addServerFromInput,
-    resetRoutingToRfSmart,
-    importRouting,
-    exportRouting,
-    importDpiConfig,
-    stopAll,
-    loadGuide,
-    clearLogFiles,
-    refreshLogs,
-    runSelfCheck,
-    createBundle,
-    runUpdateCheck,
-    runAutoUpdate,
-    runInstallerUpdate,
-    applyVisualSettings,
-    applyProxyPort,
-    saveDnsAndApply,
-    saveTelegramMeta,
-    activateFromBotLink,
-    diagText,
-    guideText,
-    routingProfilesUnique,
-    activeRoutingProfileMeta,
-    serverStats,
-    sortedServers,
-    manualServers,
-    subscriptionServers,
-    dashboardHints,
-    showVlessProtectedStrip,
-    chartPaths,
-    chartSmooth,
-    rtChartId,
+  const value: Ctx = {
+    active, setActive, sheet, openSheet, closeSheet,
+    theme, accent, setTheme, setAccent,
+    uiState, health, rt, logs, appVersion, busy, proxyPhase,
+    proxyEnabled, dpiEnabled, setProxy, setDpi, stopAll,
+    servers, activeServer, splitRows,
+    routingProfile: String(uiState?.routingProfile || "manual"),
+    setRouting, addRule, removeRule, verifyTarget,
+    selectServer, removeServer: removeServerFn, retestAll,
+    previewSubscription, importText, importFromClipboard,
+    applySubscription, refreshSubscription: refreshSubscriptionFn, clearSubscription: clearSubscriptionFn,
+    dpiLists, refreshDpiLists: loadDpiLists, toggleDpiList, readDpiList, writeDpiList,
+    runDpiTuning, dpiTune, setDpiProfile, listsPath,
+    selfCheck, runSelfCheck: runSelfCheckFn, exportBundle,
+    proxyPortDraft, applyProxyPort, applyDns,
+    activateLicense, checkUpdates, updateInfo, installUpdate,
+    guide, clearLogs, openLogsFolder: openLogsFolderFn, quit, closeToTray,
+    toast, notify, refresh,
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
 
-
+export function useApp(): Ctx {
+  const ctx = useContext(AppCtx);
+  if (!ctx) throw new Error("useApp должен вызываться внутри AppProvider");
+  return ctx;
+}

@@ -1,10 +1,12 @@
 package dpi
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -27,6 +29,9 @@ func TestWinws2Preset(configRel string, observe time.Duration) (ok bool, detail 
 		HideWindow:    true,
 		CreationFlags: 0x08000000,
 	}
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
 	if err := cmd.Start(); err != nil {
 		return false, fmt.Sprintf("не удалось запустить: %v", err), nil
 	}
@@ -39,6 +44,22 @@ func TestWinws2Preset(configRel string, observe time.Duration) (ok bool, detail 
 	runHidden("taskkill.exe", "/F", "/IM", "winws.exe", "/T")
 	if alive {
 		return true, fmt.Sprintf("процесс удерживается ~%.0f с — пресет запускается", observe.Seconds()), nil
+	}
+	errText := strings.TrimSpace(outBuf.String())
+	if errText != "" {
+		lines := strings.Split(errText, "\n")
+		var lastLine string
+		for i := len(lines) - 1; i >= 0; i-- {
+			l := strings.TrimSpace(lines[i])
+			if l != "" {
+				lastLine = l
+				break
+			}
+		}
+		if len(lastLine) > 120 {
+			lastLine = lastLine[:120] + "..."
+		}
+		return false, fmt.Sprintf("процесс завершился: %s", lastLine), nil
 	}
 	return false, "процесс завершился — смотрите лог DPI, антивирус или права администратора", nil
 }

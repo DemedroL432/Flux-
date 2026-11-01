@@ -126,8 +126,7 @@ func RenderSingBoxConfig(cfg models.AppConfig, runDir string) ([]byte, error) {
 }
 
 func serverProtocolPriority(s models.VlessServer) int {
-	proto := strings.ToLower(strings.TrimSpace(s.Params["_proto"]))
-	rawLow := strings.ToLower(strings.TrimSpace(s.RawVLESS))
+	proto := protocolOf(s)
 	hostLow := strings.ToLower(strings.TrimSpace(s.Host))
 	nameLow := strings.ToLower(strings.TrimSpace(s.Name))
 	isRU := strings.HasPrefix(hostLow, "ru") || strings.Contains(nameLow, "россия") || strings.Contains(nameLow, "russia")
@@ -135,15 +134,22 @@ func serverProtocolPriority(s models.VlessServer) int {
 	if isRU {
 		ruPenalty = 3
 	}
-	if proto == "hysteria2" || strings.HasPrefix(rawLow, "hysteria2://") || strings.HasPrefix(rawLow, "hy2://") {
-		return 1 + ruPenalty // Hysteria2 QUIC + Salamander — отличная устойчивость к ТСПУ
+	switch proto {
+	case "hysteria2", "tuic", "anytls":
+		return 1 + ruPenalty // QUIC/TLS-in-TLS с обфускацией — отличная устойчивость к ТСПУ
+	case "hysteria":
+		return 2 + ruPenalty
+	case "shadowsocks", "vmess":
+		return 3 + ruPenalty
+	case "socks", "http", "wireguard":
+		return 4 + ruPenalty
 	}
 	sec := strings.ToLower(strings.TrimSpace(s.Params["security"]))
 	netType := strings.ToLower(strings.TrimSpace(s.Params["type"]))
 	if sec == "reality" && (netType == "tcp" || netType == "" || netType == "grpc") {
 		return 1 + ruPenalty // VLESS Reality (Vision / gRPC) — максимальная скорость и маскировка
 	}
-	if proto == "trojan" || strings.HasPrefix(rawLow, "trojan://") || netType == "grpc" {
+	if proto == "trojan" || netType == "grpc" {
 		return 2 + ruPenalty
 	}
 	return 3 + ruPenalty // WebSocket — резервный транспорт (часто режется до 1 Мбит/с)
@@ -358,17 +364,13 @@ func buildVLESSOutbound(s models.Server) (map[string]any, error) {
 		port = "443"
 	}
 
-	proto := strings.ToLower(strings.TrimSpace(s.Params["_proto"]))
-	rawLow := strings.ToLower(strings.TrimSpace(s.RawVLESS))
-	if proto == "" {
-		switch {
-		case strings.HasPrefix(rawLow, "hysteria2://"), strings.HasPrefix(rawLow, "hy2://"):
-			proto = "hysteria2"
-		case strings.HasPrefix(rawLow, "trojan://"):
-			proto = "trojan"
-		default:
-			proto = "vless"
-		}
+	proto := protocolOf(s)
+	switch proto {
+	case "vless", "trojan", "hysteria2":
+		// ниже — основная ветка
+	default:
+		// vmess / shadowsocks / tuic / anytls / hysteria v1 / socks / http / wireguard
+		return buildAdditionalOutbound(s)
 	}
 
 	security := strings.ToLower(strings.TrimSpace(s.Params["security"]))

@@ -73,4 +73,3 @@ func TestParseTrojanAndHysteria2(t *testing.T) {
 		t.Fatalf("expected dummy 127.0.0.1:1 server to be rejected")
 	}
 }
-
