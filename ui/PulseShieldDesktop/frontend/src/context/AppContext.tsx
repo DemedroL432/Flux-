@@ -4,55 +4,57 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
+  ActivateLicense,
   AddUserRoutingRule,
+  ApplyAutoUpdate,
+  ApplyDnsNow,
   ApplyRuntime,
+  CheckForUpdates,
+  ClearLogFiles,
+  ClearSubscription,
+  CloseToTray,
+  CreateDiagnosticsBundle,
   GetAppVersion,
+  GetAvailableDpiLists,
+  GetDpiListContent,
   GetLogsState,
   GetRealtimeStats,
   GetRoutingSplitView,
   GetServiceHealth,
   GetUIState,
+  GetUpdateInfo,
+  GetZapretListsPathHint,
+  ImportServerFromClipboard,
+  ImportServersFromText,
+  OpenLogsFolder,
+  PreviewSubscription,
+  ProgramGuide,
+  RefreshSubscription,
   RemoveServer,
   RemoveUserRoutingRuleAt,
   RequestQuit,
+  RetestServer,
   RetestServersBatch,
-  SetActiveServer,
-  SetDPIEnabled,
-  SetProxyEnabled,
-  SetRoutingProfile,
-  ImportServersFromText,
-  ImportServerFromClipboard,
-  ClearSubscription,
-  RefreshSubscription,
-  SetSubscriptionURL,
-  PreviewSubscription,
   RunDpiAdaptiveTuning,
   RunSelfCheckText,
-  CreateDiagnosticsBundle,
   SetActiveDPIProfile,
-  GetAvailableDpiLists,
-  ToggleDpiList,
-  GetDpiListContent,
-  SetDpiListContent,
-  SetProxyPort,
+  SetActiveServer,
+  SetDPIEnabled,
   SetDnsSettings,
-  ActivateLicense,
-  CheckForUpdates,
-  GetUpdateInfo,
-  ApplyAutoUpdate,
-  ProgramGuide,
-  GetZapretListsPathHint,
-  ClearLogFiles,
-  CloseToTray,
-  OpenLogsFolder,
+  SetDpiListContent,
+  SetProxyEnabled,
+  SetProxyPort,
+  SetRoutingProfile,
+  SetSubscriptionURL,
+  ToggleDpiList,
+  VerifyRouteTarget,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import type { AccentKey, NavKey, SheetKey, ThemeKey, ToastState } from "../types";
+import type { AccentKey, DpiSubTab, NavKey, ThemeKey, ToastState } from "../types";
 import {
   ACCENT_STORAGE_KEY,
   DEFAULT_ACCENT,
@@ -65,20 +67,20 @@ import {
 type Any = Record<string, unknown>;
 
 type Ctx = {
-  // РЅР°РІРёРіР°С†РёСЏ
+  // Навигация
   active: NavKey;
   setActive: (k: NavKey) => void;
-  sheet: SheetKey | null;
-  openSheet: (k: SheetKey) => void;
-  closeSheet: () => void;
+  dpiSubTab: DpiSubTab;
+  setDpiSubTab: (tab: DpiSubTab) => void;
+  openDpiTab: (tab: DpiSubTab) => void;
 
-  // С‚РµРјР°
+  // Тема
   theme: ThemeKey;
   accent: AccentKey;
   setTheme: (t: ThemeKey) => void;
   setAccent: (a: AccentKey) => void;
 
-  // СЃРѕСЃС‚РѕСЏРЅРёРµ РґРІРёР¶РєРѕРІ
+  // Состояние движков
   uiState: Any;
   health: Any;
   rt: Any;
@@ -92,7 +94,7 @@ type Ctx = {
   setDpi: (on: boolean) => Promise<void>;
   stopAll: () => Promise<void>;
 
-  // СЃРµСЂРІРµСЂС‹ Рё РјР°СЂС€СЂСѓС‚С‹
+  // Серверы и маршруты
   servers: Any[];
   activeServer: Any | null;
   splitRows: Any[];
@@ -103,9 +105,10 @@ type Ctx = {
   verifyTarget: (q: string) => Promise<Any | null>;
   selectServer: (id: string) => Promise<void>;
   removeServer: (id: string) => Promise<void>;
+  retestServer: (id: string) => Promise<void>;
   retestAll: () => Promise<void>;
 
-  // РїРѕРґРїРёСЃРєР°
+  // Подписка
   previewSubscription: (url: string) => Promise<Any | null>;
   importText: (text: string) => Promise<number>;
   importFromClipboard: () => Promise<void>;
@@ -124,7 +127,7 @@ type Ctx = {
   setDpiProfile: (name: string) => Promise<void>;
   listsPath: string;
 
-  // РїСЂРѕС‡РµРµ
+  // Сеть, диагностика и обновления
   selfCheck: string;
   runSelfCheck: () => Promise<void>;
   exportBundle: () => Promise<void>;
@@ -141,9 +144,10 @@ type Ctx = {
   quit: () => void;
   closeToTray: () => void;
 
-  // СѓРІРµРґРѕРјР»РµРЅРёСЏ
+  // Уведомления
   toast: ToastState | null;
   notify: (text: string, variant?: "info" | "error") => void;
+  dismissToast: () => void;
   refresh: () => Promise<void>;
 };
 
@@ -161,15 +165,21 @@ function writeLS(key: string, val: string) {
   try {
     localStorage.setItem(key, val);
   } catch {
-    /* РїСЂРёРІР°С‚РЅС‹Р№ СЂРµР¶РёРј вЂ” РЅРµ РєСЂРёС‚РёС‡РЅРѕ */
+    /* игнорируем ошибку доступа к localStorage */
   }
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [active, setActiveRaw] = useState<NavKey>("shield");
-  const [sheet, setSheet] = useState<SheetKey | null>(null);
-  const [theme, setThemeRaw] = useState<ThemeKey>(() => normalizeTheme(readLS(THEME_STORAGE_KEY)));
-  const [accent, setAccentRaw] = useState<AccentKey>(() => normalizeAccent(readLS(ACCENT_STORAGE_KEY)));
+  const [dpiSubTab, setDpiSubTab] = useState<DpiSubTab>("profiles");
+  const [theme, setThemeRaw] = useState<ThemeKey>(() => {
+    const t = normalizeTheme(readLS(THEME_STORAGE_KEY));
+    return t || DEFAULT_THEME;
+  });
+  const [accent, setAccentRaw] = useState<AccentKey>(() => {
+    const a = normalizeAccent(readLS(ACCENT_STORAGE_KEY));
+    return a || DEFAULT_ACCENT;
+  });
 
   const [uiState, setUiState] = useState<Any>({});
   const [health, setHealth] = useState<Any>({});
@@ -185,9 +195,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [guide, setGuide] = useState("");
   const [listsPath, setListsPath] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [proxyPortDraft, setProxyPortDraft] = useState(2080);
+  const [proxyPortDraft, setProxyPortDraft] = useState(8080);
 
-  const connectedRef = useRef(false);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   const notify = useCallback((text: string, variant: "info" | "error" = "info") => {
     setToast({ text, variant });
@@ -195,12 +205,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setActive = useCallback((k: NavKey) => {
-    setSheet(null);
     setActiveRaw(k);
   }, []);
 
-  const openSheet = useCallback((k: SheetKey) => setSheet(k), []);
-  const closeSheet = useCallback(() => setSheet(null), []);
+  const openDpiTab = useCallback((tab: DpiSubTab) => {
+    setDpiSubTab(tab);
+    setActiveRaw("dpi");
+  }, []);
 
   const setTheme = useCallback((t: ThemeKey) => {
     setThemeRaw(t);
@@ -218,7 +229,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     el.setAttribute("data-accent", accent);
   }, [theme, accent]);
 
-  /** РџРµСЂРµС‡РёС‚Р°С‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ РёР· Р±СЌРєРµРЅРґР°. */
+  const loadDpiLists = useCallback(async () => {
+    try {
+      setDpiLists(((await GetAvailableDpiLists()) || []) as unknown as Any[]);
+    } catch {
+      setDpiLists([]);
+    }
+  }, []);
+
+  /** Перечитать состояние из бэкенда. */
   const refresh = useCallback(async () => {
     try {
       const [ui, h, r, l, rows] = await Promise.all([
@@ -236,29 +255,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const port = Number((ui as unknown as Any)?.proxyPort);
       if (port > 0) setProxyPortDraft(port);
     } catch {
-      /* Р±СЌРєРµРЅРґ РµС‰С‘ РЅРµ РіРѕС‚РѕРІ вЂ” РїРѕРІС‚РѕСЂРёРј РЅР° СЃР»РµРґСѓСЋС‰РµРј С‚РёРєРµ */
+      /* бэкенд ещё не готов — повторим на следующем тике */
     }
   }, []);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      await refresh();
+      await Promise.all([refresh(), loadDpiLists()]);
       if (!alive) return;
       try {
         setAppVersion(await GetAppVersion());
         setListsPath(await GetZapretListsPathHint());
         setGuide(await ProgramGuide());
       } catch {
-        /* РЅРµРѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РґР°РЅРЅС‹Рµ */
+        /* необязательные данные */
       }
     })();
     return () => {
       alive = false;
     };
-  }, [refresh]);
+  }, [refresh, loadDpiLists]);
 
-  // Р–РёРІС‹Рµ РјРµС‚СЂРёРєРё: РѕР±РЅРѕРІР»СЏРµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ РєР°Р¶РґС‹Рµ 2 СЃРµРєСѓРЅРґС‹.
+  // Живые метрики каждые 2 секунды.
   useEffect(() => {
     const id = window.setInterval(() => {
       void (async () => {
@@ -267,14 +286,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setRt((r || {}) as unknown as Any);
           setHealth((h || {}) as unknown as Any);
         } catch {
-          /* РїСЂРѕРїСѓСЃРєР°РµРј С‚РёРє */
+          /* пропускаем тик */
         }
       })();
     }, 2000);
     return () => window.clearInterval(id);
   }, []);
 
-  // РџРѕРґРїРёСЃРєР° РЅР° СЃРѕР±С‹С‚РёСЏ Р±СЌРєРµРЅРґР°.
+  // Подписка на события бэкенда.
   useEffect(() => {
     try {
       const off = EventsOn("state-changed", () => {
@@ -291,17 +310,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const proxyEnabled = !!uiState?.proxyEnabled;
   const dpiEnabled = !!uiState?.dpiEnabled;
   const proxyRunning = proxyEnabled && !!health?.proxyLocalOk;
-  const dpiRunning = dpiEnabled && !!health?.dpiRunning;
 
   const proxyPhase: "idle" | "connecting" | "connected" = proxyRunning
     ? "connected"
     : proxyEnabled
       ? "connecting"
       : "idle";
-
-  useEffect(() => {
-    connectedRef.current = proxyRunning;
-  }, [proxyRunning]);
 
   const withBusy = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | null> => {
     setBusy(true);
@@ -357,9 +371,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await withBusy(async () => {
         await AddUserRoutingRule(pattern, target);
         await ApplyRuntime();
+        await loadDpiLists();
       });
     },
-    [withBusy]
+    [loadDpiLists, withBusy]
   );
 
   const removeRule = useCallback(
@@ -367,14 +382,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await withBusy(async () => {
         await RemoveUserRoutingRuleAt(index);
         await ApplyRuntime();
+        await loadDpiLists();
       });
     },
-    [withBusy]
+    [loadDpiLists, withBusy]
   );
 
   const verifyTarget = useCallback(async (q: string) => {
     try {
-      const { VerifyRouteTarget } = await import("../../wailsjs/go/main/App");
       return (await VerifyRouteTarget(q)) as unknown as Any;
     } catch (e: unknown) {
       notify(String(e instanceof Error ? e.message : e), "error");
@@ -392,6 +407,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const removeServerFn = useCallback(
     async (id: string) => {
       await withBusy(() => RemoveServer(id));
+    },
+    [withBusy]
+  );
+
+  const retestServerFn = useCallback(
+    async (id: string) => {
+      await withBusy(() => RetestServer(id));
     },
     [withBusy]
   );
@@ -443,26 +465,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await withBusy(() => ClearSubscription());
   }, [withBusy]);
 
-  const loadDpiLists = useCallback(async () => {
-    try {
-      setDpiLists(((await GetAvailableDpiLists()) || []) as unknown as Any[]);
-    } catch {
-      setDpiLists([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadDpiLists();
-  }, [loadDpiLists]);
-
   const toggleDpiList = useCallback(
     async (name: string, on: boolean) => {
       await withBusy(async () => {
         await ToggleDpiList(name, on);
-        setDpiLists(((await GetAvailableDpiLists()) || []) as unknown as Any[]);
+        await loadDpiLists();
       });
     },
-    [withBusy]
+    [loadDpiLists, withBusy]
   );
 
   const readDpiList = useCallback(async (name: string) => {
@@ -483,11 +493,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const runDpiTuning = useCallback(async () => {
     const res = await withBusy(async () => {
-      notify("РџРѕРґР±РёСЂР°СЋ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ РѕР±С…РѕРґР° вЂ” СЌС‚Рѕ РјРѕР¶РµС‚ Р·Р°РЅСЏС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РјРёРЅСѓС‚вЂ¦");
+      notify("Подбираю конфигурацию обхода — это может занять несколько минут…");
       return await RunDpiAdaptiveTuning(false);
     });
-    if (res) setDpiTune(res as unknown as Any);
-    if (res) notify("РџРѕРґР±РѕСЂ Р·Р°РІРµСЂС€С‘РЅ");
+    if (res) {
+      setDpiTune(res as unknown as Any);
+      notify("Подбор завершён");
+    }
     return (res as unknown as Any) || null;
   }, [notify, withBusy]);
 
@@ -515,7 +527,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const exportBundle = useCallback(async () => {
     try {
       const p = await CreateDiagnosticsBundle();
-      notify(`РђСЂС…РёРІ СЃРѕС…СЂР°РЅС‘РЅ: ${p}`);
+      notify(`Архив сохранён: ${p}`);
     } catch (e: unknown) {
       notify(String(e instanceof Error ? e.message : e), "error");
     }
@@ -535,10 +547,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (preset: string, primary: string, secondary: string) => {
       await withBusy(async () => {
         await SetDnsSettings(preset, primary, secondary);
-        await ApplyRuntime();
+        await ApplyDnsNow();
+        notify("DNS применён");
       });
     },
-    [withBusy]
+    [notify, withBusy]
   );
 
   const activateLicense = useCallback(
@@ -584,7 +597,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const quit = useCallback(() => {
     void RequestQuit().catch(() => {
-      /* всё равно закрываемся */
+      /* при ошибке всё равно закрываем процесс */
     });
   }, []);
 
@@ -601,23 +614,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [servers, uiState]);
 
   const value: Ctx = {
-    active, setActive, sheet, openSheet, closeSheet,
-    theme, accent, setTheme, setAccent,
-    uiState, health, rt, logs, appVersion, busy, proxyPhase,
-    proxyEnabled, dpiEnabled, setProxy, setDpi, stopAll,
-    servers, activeServer, splitRows,
+    active,
+    setActive,
+    dpiSubTab,
+    setDpiSubTab,
+    openDpiTab,
+    theme,
+    accent,
+    setTheme,
+    setAccent,
+    uiState,
+    health,
+    rt,
+    logs,
+    appVersion,
+    busy,
+    proxyPhase,
+    proxyEnabled,
+    dpiEnabled,
+    setProxy,
+    setDpi,
+    stopAll,
+    servers,
+    activeServer,
+    splitRows,
     routingProfile: String(uiState?.routingProfile || "manual"),
-    setRouting, addRule, removeRule, verifyTarget,
-    selectServer, removeServer: removeServerFn, retestAll,
-    previewSubscription, importText, importFromClipboard,
-    applySubscription, refreshSubscription: refreshSubscriptionFn, clearSubscription: clearSubscriptionFn,
-    dpiLists, refreshDpiLists: loadDpiLists, toggleDpiList, readDpiList, writeDpiList,
-    runDpiTuning, dpiTune, setDpiProfile, listsPath,
-    selfCheck, runSelfCheck: runSelfCheckFn, exportBundle,
-    proxyPortDraft, applyProxyPort, applyDns,
-    activateLicense, checkUpdates, updateInfo, installUpdate,
-    guide, clearLogs, openLogsFolder: openLogsFolderFn, quit, closeToTray,
-    toast, notify, refresh,
+    setRouting,
+    addRule,
+    removeRule,
+    verifyTarget,
+    selectServer,
+    removeServer: removeServerFn,
+    retestServer: retestServerFn,
+    retestAll,
+    previewSubscription,
+    importText,
+    importFromClipboard,
+    applySubscription,
+    refreshSubscription: refreshSubscriptionFn,
+    clearSubscription: clearSubscriptionFn,
+    dpiLists,
+    refreshDpiLists: loadDpiLists,
+    toggleDpiList,
+    readDpiList,
+    writeDpiList,
+    runDpiTuning,
+    dpiTune,
+    setDpiProfile,
+    listsPath,
+    selfCheck,
+    runSelfCheck: runSelfCheckFn,
+    exportBundle,
+    proxyPortDraft,
+    applyProxyPort,
+    applyDns,
+    activateLicense,
+    checkUpdates,
+    updateInfo,
+    installUpdate,
+    guide,
+    clearLogs,
+    openLogsFolder: openLogsFolderFn,
+    quit,
+    closeToTray,
+    toast,
+    notify,
+    dismissToast,
+    refresh,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

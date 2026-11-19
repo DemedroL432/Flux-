@@ -9,7 +9,7 @@
   "info": {
     "companyName": "FLUX",
     "productName": "FLUX",
-    "productVersion": "0.7.5",
+    "productVersion": "0.7.6",
     "copyright": "Copyright © FLUX",
     "comments": "FLUX — обход DPI и локальный прокси"
   },

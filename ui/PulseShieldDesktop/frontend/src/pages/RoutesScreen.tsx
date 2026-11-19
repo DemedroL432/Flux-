@@ -1,252 +1,346 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
-import { Icon } from "../icons";
-import { ScreenHead } from "../ui";
-import { ROUTE_TARGET_LABEL, type RouteTarget } from "../types";
-import { routingLabel } from "./ShieldScreen";
+import { ROUTE_TARGET_LABEL, RouteTarget } from "../types";
+import { routingLabel } from "../ui";
 
-type Row = {
-  pattern: string;
-  target: string;
-  system?: boolean;
-  label?: string;
-  source?: string;
-  userIndex?: number;
-};
+type FilterTab = "all" | "user" | RouteTarget;
 
-/** Порядок приоритета: пользовательские правила выше профиля, профиль выше библиотеки. */
-function sourceRank(src?: string): number {
-  switch (src) {
-    case "user":
-      return 0;
-    case "profile":
-      return 1;
-    case "library":
-      return 2;
+const DEFAULT_ROW_CAP = 60;
+
+function targetTagTone(target: string): string {
+  switch (target) {
+    case "proxy":
+      return "accent";
+    case "dpi-bypass":
+      return "good";
+    case "block":
+      return "bad";
     default:
-      return 3;
+      return "";
   }
 }
 
-const MODE_CARDS = [
-  {
-    key: "full-proxy",
-    title: "Полный прокси",
-    blurb: "Весь трафик через туннель, кроме локального и РФ",
-    icon: "shield",
-  },
-  {
-    key: "manual",
-    title: "Ручные правила",
-    blurb: "В туннель уходит только то, что вы добавили",
-    icon: "routes",
-  },
-];
-
-const FILTERS: { key: "all" | "user" | "dpi" | "proxy"; label: string }[] = [
-  { key: "all", label: "Все" },
-  { key: "user", label: "Мои" },
-  { key: "proxy", label: "Через прокси" },
-  { key: "dpi", label: "Обход DPI" },
-];
+function sourceLabel(source: string): string {
+  switch (source) {
+    case "user":
+      return "Моё";
+    case "profile":
+      return "Профиль";
+    case "library":
+      return "Библиотека";
+    default:
+      return source || "Система";
+  }
+}
 
 export function RoutesScreen() {
-  const { splitRows, routingProfile, setRouting, removeRule, busy, openSheet, uiState } = useApp();
-  const [expanded, setExpanded] = useState(false);
-  const [filter, setFilter] = useState<"all" | "user" | "dpi" | "proxy">("all");
-  const [query, setQuery] = useState("");
+  const {
+    uiState,
+    splitRows,
+    setRouting,
+    addRule,
+    removeRule,
+    busy,
+  } = useApp();
 
-  const all = useMemo(() => {
-    const rows = ((splitRows || []) as unknown as Row[]).slice();
-    return rows.sort((a, b) => sourceRank(a.source) - sourceRank(b.source));
+  const [pattern, setPattern] = useState("");
+  const [target, setTarget] = useState<RouteTarget>("proxy");
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(false);
+
+  const routingProfile = String(uiState?.routingProfile || "manual");
+  const availableProfiles: string[] =
+    Array.isArray(uiState?.routingProfiles) && uiState.routingProfiles.length > 0
+      ? (uiState.routingProfiles as unknown[])
+          .map((p) =>
+            typeof p === "string"
+              ? p
+              : String((p as Record<string, unknown>)?.name ?? ""),
+          )
+          .filter(Boolean)
+      : ["manual", "full-proxy"];
+
+  const counts = useMemo(() => {
+    const res = {
+      all: splitRows.length,
+      user: 0,
+      proxy: 0,
+      "dpi-bypass": 0,
+      direct: 0,
+      block: 0,
+    };
+    for (const r of splitRows) {
+      if (String(r.source ?? "") === "user") res.user += 1;
+      const t = String(r.target ?? "");
+      if (t === "proxy") res.proxy += 1;
+      else if (t === "dpi-bypass") res["dpi-bypass"] += 1;
+      else if (t === "direct") res.direct += 1;
+      else if (t === "block") res.block += 1;
+    }
+    return res;
   }, [splitRows]);
 
-  const rows = useMemo(() => {
-    let out = all;
-    if (filter === "user") out = out.filter((r) => r.source === "user");
-    else if (filter === "dpi") out = out.filter((r) => r.target === "dpi-bypass");
-    else if (filter === "proxy") out = out.filter((r) => r.target === "proxy");
-    const q = query.trim().toLowerCase();
-    if (q) out = out.filter((r) => (r.pattern || "").toLowerCase().includes(q));
-    return out;
-  }, [all, filter, query]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return splitRows.filter((row) => {
+      const rowTarget = String(row.target ?? "");
+      const rowSource = String(row.source ?? "");
+      if (filterTab === "user" && rowSource !== "user") return false;
+      if (
+        filterTab !== "all" &&
+        filterTab !== "user" &&
+        rowTarget !== filterTab
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        String(row.pattern ?? "").toLowerCase().includes(q) ||
+        String(row.label ?? "").toLowerCase().includes(q) ||
+        rowTarget.toLowerCase().includes(q)
+      );
+    });
+  }, [splitRows, filterTab, search]);
 
-  const LIMIT = 8;
-  const visible = expanded ? rows : rows.slice(0, LIMIT);
-  const hidden = Math.max(0, rows.length - LIMIT);
+  const visibleRows =
+    expanded || filtered.length <= DEFAULT_ROW_CAP
+      ? filtered
+      : filtered.slice(0, DEFAULT_ROW_CAP);
 
-  const activeMode = routingProfile === "full-proxy" || routingProfile === "default" ? "full-proxy" : "manual";
-
-  // Сколько доменов реально уйдёт в обход DPI — это и есть содержимое custom-dpi.
-  const dpiCount = useMemo(() => all.filter((r) => r.target === "dpi-bypass" && r.source === "user").length, [all]);
-  const userCount = useMemo(() => all.filter((r) => r.source === "user").length, [all]);
+  async function handleAddRule(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = pattern.trim();
+    if (!trimmed) return;
+    await addRule(trimmed, target);
+    setPattern("");
+  }
 
   return (
-    <>
-      <ScreenHead
-        title="Маршруты"
-        sub="Что идёт через прокси, а что напрямую"
-        right={
-          <button type="button" className="chip mute" onClick={() => openSheet("verify")}>
-            Проверить сайт <Icon name="chev" size={14} />
-          </button>
-        }
-      />
+    <div>
+      {/* Routing Profile Switcher */}
+      <section className="fx-section fx-section-first">
+        <div className="fx-sec-head">
+          <div>
+            <div className="fx-sec-title">РЕЖИМ МАРШРУТИЗАЦИИ</div>
+            <div className="fx-sec-desc">
+              {routingProfile === "full-proxy"
+                ? "Весь трафик направляется через прокси-туннель (кроме локальных адресов и пользовательских исключений)."
+                : "Домены распределяются по вашим правилам, профилям и активным спискам обхода DPI."}
+            </div>
+          </div>
 
-      <div className="scr scroll">
-        <div className="profiles">
-          {MODE_CARDS.map((m) => {
-            const on = activeMode === m.key;
-            return (
+          <div className="fx-seg" role="group" aria-label="Режим маршрутизации">
+            {availableProfiles.map((prof) => (
               <button
-                key={m.key}
+                key={prof}
                 type="button"
-                className={`profile${on ? " on" : ""}`}
+                className={`fx-seg-btn ${routingProfile === prof ? "active" : ""}`}
                 disabled={busy}
-                onClick={() => void setRouting(m.key)}
-                aria-pressed={on}
+                onClick={() => void setRouting(prof)}
               >
-                <span className="pi">
-                  <Icon name={m.icon} />
-                </span>
-                <b>{m.title}</b>
-                <small>{m.blurb}</small>
-                <span className="tick">
-                  <Icon name="check" size={12} />
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="tile">
-          <div className="tile-head">
-            <h3>Правила</h3>
-            <button type="button" className="more" onClick={() => openSheet("rule")} disabled={busy}>
-              Добавить <Icon name="plus" size={14} />
-            </button>
-          </div>
-
-          <div className="rules-toolbar">
-            <input
-              className="field"
-              placeholder="Найти правило"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Поиск по правилам"
-            />
-          </div>
-
-          <div className="seg" role="tablist" aria-label="Фильтр правил">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                role="tab"
-                aria-selected={filter === f.key}
-                className={filter === f.key ? "on" : ""}
-                onClick={() => setFilter(f.key)}
-              >
-                {f.label}
+                {routingLabel(prof)}
               </button>
             ))}
           </div>
+        </div>
+      </section>
 
-          {rows.length === 0 ? (
-            <div className="empty">
-              <Icon name="routes" size={22} />
-              <p>
-                {all.length === 0
-                  ? "Правил пока нет. Добавьте сайт, который должен идти через прокси или в обход DPI."
-                  : "Ничего не нашлось по этому фильтру."}
-              </p>
-              {all.length === 0 ? (
-                <button type="button" className="btn sm primary" onClick={() => openSheet("rule")}>
-                  Добавить правило
-                </button>
-              ) : null}
+      {/* Inline Rule Builder */}
+      <section className="fx-section">
+        <div className="fx-sec-head">
+          <div>
+            <div className="fx-sec-title">ДОБАВИТЬ ПОЛЬЗОВАТЕЛЬСКОЕ ПРАВИЛО</div>
+            <div className="fx-sec-desc">
+              Пользовательские правила имеют наивысший приоритет. Действие «Обход DPI»
+              направляет домен напрямую в обход прокси для обработки winws2.
+            </div>
+          </div>
+        </div>
+
+        <form className="fx-bar" onSubmit={(e) => void handleAddRule(e)}>
+          <input
+            type="text"
+            className="fx-well-input mono fx-bar-grow"
+            placeholder="Домен, суффикс или CIDR (например example.com, *.domain.org, 10.0.0.0/8)"
+            value={pattern}
+            onChange={(e) => setPattern(e.target.value)}
+          />
+
+          <select
+            className="fx-well-select"
+            value={target}
+            onChange={(e) => setTarget(e.target.value as RouteTarget)}
+            aria-label="Действие маршрута"
+          >
+            {(Object.keys(ROUTE_TARGET_LABEL) as RouteTarget[]).map((key) => (
+              <option key={key} value={key}>
+                {ROUTE_TARGET_LABEL[key]}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="submit"
+            className="fx-btn fx-btn-primary"
+            disabled={busy || !pattern.trim()}
+          >
+            Добавить
+          </button>
+        </form>
+      </section>
+
+      {/* Rules Filter & Full-bleed Table */}
+      <section className="fx-section">
+        <div className="fx-sec-head">
+          <div className="fx-bar fx-bar-grow">
+            <div className="fx-seg" role="group" aria-label="Фильтр правил">
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "all" ? "active" : ""}`}
+                onClick={() => setFilterTab("all")}
+              >
+                Все ({counts.all})
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "user" ? "active" : ""}`}
+                onClick={() => setFilterTab("user")}
+              >
+                Мои ({counts.user})
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "proxy" ? "active" : ""}`}
+                onClick={() => setFilterTab("proxy")}
+              >
+                Прокси ({counts.proxy})
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "dpi-bypass" ? "active" : ""}`}
+                onClick={() => setFilterTab("dpi-bypass")}
+              >
+                DPI ({counts["dpi-bypass"]})
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "direct" ? "active" : ""}`}
+                onClick={() => setFilterTab("direct")}
+              >
+                Напрямую ({counts.direct})
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${filterTab === "block" ? "active" : ""}`}
+                onClick={() => setFilterTab("block")}
+              >
+                Блок ({counts.block})
+              </button>
+            </div>
+
+            <input
+              type="text"
+              className="fx-well-input"
+              style={{ width: 220, maxWidth: "100%" }}
+              placeholder="Фильтр по шаблону…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {filtered.length > DEFAULT_ROW_CAP && (
+            <button
+              type="button"
+              className="fx-btn fx-btn-sm"
+              onClick={() => setExpanded((prev) => !prev)}
+            >
+              {expanded
+                ? `Свернуть до ${DEFAULT_ROW_CAP}`
+                : `Показать все (${filtered.length})`}
+            </button>
+          )}
+        </div>
+
+        <div className="fx-list-wrap">
+          <div className="fx-thead">
+            <span style={{ flex: 1.4, minWidth: 160 }}>Шаблон</span>
+            <span style={{ width: 120 }}>Назначение</span>
+            <span style={{ width: 110 }}>Источник</span>
+            <span className="fx-cell-grow">Описание</span>
+            <span style={{ width: 92, textAlign: "right" }}>Действие</span>
+          </div>
+
+          {visibleRows.length === 0 ? (
+            <div className="fx-empty">
+              {splitRows.length === 0
+                ? "Правила маршрутизации отсутствуют."
+                : "Нет правил, подходящих под выбранный фильтр."}
             </div>
           ) : (
-            <div className="rules-list">
-              {visible.map((r) => {
-                const tgt = (r.target || "direct") as RouteTarget;
-                const isUser = r.source === "user";
-                return (
+            visibleRows.map((row, idx) => {
+              const pat = String(row.pattern ?? "");
+              const t = String(row.target ?? "direct");
+              const src = String(row.source ?? "");
+              const lbl = String(row.label ?? "");
+              const isUser = src === "user" && !row.system;
+              const userIdx = Number(row.userIndex ?? -1);
+
+              return (
+                <div key={`${src}-${pat}-${idx}`} className="fx-trow">
                   <div
-                    key={`${r.source}-${r.userIndex ?? r.label}-${r.pattern}`}
-                    className="rule-row"
+                    style={{ flex: 1.4, minWidth: 160 }}
+                    className="fx-mono fx-truncate fx-select-text"
+                    title={pat}
                   >
-                    <span className={`src-badge ${r.source || "profile"}`}>
-                      {isUser ? "моё" : r.source === "library" ? "библ." : "профиль"}
+                    {pat}
+                  </div>
+
+                  <div style={{ width: 120 }}>
+                    <span className={`fx-tag ${targetTagTone(t)}`}>
+                      {ROUTE_TARGET_LABEL[t as RouteTarget] || t}
                     </span>
-                    <span className="rl-t" title={r.pattern}>
-                      {r.pattern}
+                  </div>
+
+                  <div style={{ width: 110 }}>
+                    <span className={`fx-tag ${isUser ? "accent" : ""}`}>
+                      {sourceLabel(src)}
                     </span>
-                    <span className={`chip ${tgt}`}>{ROUTE_TARGET_LABEL[tgt] || tgt}</span>
-                    {isUser && typeof r.userIndex === "number" ? (
+                  </div>
+
+                  <div
+                    className="fx-cell-grow fx-truncate"
+                    style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                    title={lbl}
+                  >
+                    {lbl || "—"}
+                  </div>
+
+                  <div style={{ width: 92, textAlign: "right" }}>
+                    {isUser && userIdx >= 0 ? (
                       <button
                         type="button"
-                        className="rule-del"
-                        title="Удалить это правило"
-                        aria-label={`Удалить правило ${r.pattern}`}
+                        className="fx-btn fx-btn-sm fx-btn-ghost"
                         disabled={busy}
-                        onClick={() => void removeRule(r.userIndex as number)}
+                        onClick={() => void removeRule(userIdx)}
                       >
-                        <Icon name="trash" size={14} />
+                        Удалить
                       </button>
                     ) : (
-                      <span className="rule-del ghost" aria-hidden />
+                      <span
+                        className="fx-mono"
+                        style={{ fontSize: 11, color: "var(--text-muted)" }}
+                      >
+                        {row.system ? "система" : "—"}
+                      </span>
                     )}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })
           )}
-
-          {hidden > 0 ? (
-            <button type="button" className="btn sm soft block" onClick={() => setExpanded((v) => !v)}>
-              {expanded ? "Свернуть" : `Показать все (${rows.length})`}
-            </button>
-          ) : null}
         </div>
-
-        <div className="tile">
-          <div className="tile-head">
-            <h3>Обход DPI</h3>
-            <button type="button" className="more" onClick={() => openSheet("tune-dpi")} disabled={busy}>
-              Настроить <Icon name="chev" size={14} />
-            </button>
-          </div>
-          <div className="metric-row">
-            <span>Домены в custom-dpi</span>
-            <strong className={dpiCount > 0 ? "ok" : "muted"}>{dpiCount}</strong>
-          </div>
-          <div className="metric-row">
-            <span>Всего моих правил</span>
-            <strong>{userCount}</strong>
-          </div>
-          <div className="metric-row">
-            <span>Модуль DPI</span>
-            <strong className={uiState?.dpiEnabled ? "ok" : "muted"}>
-              {uiState?.dpiEnabled ? "включён" : "выключен"}
-            </strong>
-          </div>
-          <p className="sheet-sub" style={{ margin: "4px 16px 12px" }}>
-            Сайты с действием «Обход DPI» попадают в список custom-dpi и обходятся без прокси.
-          </p>
-        </div>
-
-        <div className="tile">
-          <div className="tile-head">
-            <h3>Режим</h3>
-            <span className="mute">{routingLabel(String(uiState?.routingProfile || ""))}</span>
-          </div>
-          <div className="metric-row">
-            <span>Остальной трафик</span>
-            <strong>{activeMode === "full-proxy" ? "через прокси" : "напрямую"}</strong>
-          </div>
-        </div>
-      </div>
-    </>
+      </section>
+    </div>
   );
 }

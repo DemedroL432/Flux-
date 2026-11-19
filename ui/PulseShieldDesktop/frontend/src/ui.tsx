@@ -1,119 +1,271 @@
-import type { ReactNode } from "react";
+import React from "react";
 import { useApp } from "./context/AppContext";
-import { NAV_ITEMS } from "./types";
+import { NAV_ITEMS, NavKey } from "./types";
 import { Icon } from "./icons";
+import { formatClock } from "./format";
 
-/** Левая рейка навигации с логотипом, разделами и кнопкой оформления. */
-export function Rail() {
-  const { active, setActive, openSheet, theme } = useApp();
+export function routingLabel(name?: string): string {
+  switch (name) {
+    case "full-proxy":
+      return "Полный прокси";
+    case "manual":
+      return "Ручные правила";
+    default:
+      return name || "Ручные правила";
+  }
+}
+
+export function Switch({
+  checked,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className={`fx-sw ${checked ? "on" : ""}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!checked);
+      }}
+    />
+  );
+}
+
+export function Sidebar() {
+  const {
+    active,
+    setActive,
+    appVersion,
+    uiState,
+    proxyEnabled,
+    dpiEnabled,
+    proxyPhase,
+    setProxy,
+    setDpi,
+    activeServer,
+    servers,
+    splitRows,
+    dpiLists,
+    busy,
+  } = useApp();
+
+  const dpiEnabledCount = dpiLists.filter((l) => Boolean(l.enabled)).length;
+  const countFor = (key: NavKey): string | undefined => {
+    if (key === "servers" && servers.length > 0) return String(servers.length);
+    if (key === "routes" && splitRows.length > 0) return String(splitRows.length);
+    if (key === "dpi" && dpiLists.length > 0) return `${dpiEnabledCount}/${dpiLists.length}`;
+    return undefined;
+  };
+
+  const activeServerName = String(activeServer?.name ?? "");
+  const proxySub =
+    proxyPhase === "connecting"
+      ? "Подключение…"
+      : proxyEnabled
+        ? activeServerName || "Запущен"
+        : "Остановлен";
+  const dpiSub = dpiEnabled
+    ? String(uiState?.activeDpiProfile || "Активен")
+    : "Остановлен";
 
   return (
-    <aside className="rail">
-      <button
-        type="button"
-        className="rail-brand"
-        title="Flux — на главный экран"
-        onClick={() => setActive("shield")}
+    <aside className="fx-side">
+      <div
+        className="fx-brand"
+        style={{ ["--wails-draggable" as string]: "drag" }}
       >
-        F
-      </button>
+        <div className="fx-brand-id">
+          <span className="fx-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <path
+                d="M8 1.5L13.5 4.2V8.4C13.5 11.4 11.1 13.7 8 14.6C4.9 13.7 2.5 11.4 2.5 8.4V4.2L8 1.5Z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+              <circle cx="8" cy="8" r="1.8" fill="currentColor" />
+            </svg>
+          </span>
+          <span className="fx-brand-name">Flux</span>
+        </div>
+        <span className="fx-ver">v{appVersion || "0.7.6"}</span>
+      </div>
 
-      <nav className="rail-nav" aria-label="Разделы">
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className={`rail-btn${active === item.key ? " active" : ""}`}
-            data-tip={item.label}
-            aria-label={item.label}
-            aria-current={active === item.key ? "page" : undefined}
-            onClick={() => setActive(item.key)}
-          >
-            <Icon name={item.icon} />
-          </button>
-        ))}
+      <div className="fx-engines">
+        <div className="fx-side-label">Движки</div>
+
+        <div className="fx-eng-row">
+          <div className="fx-eng-main">
+            <span
+              className={`fx-dot ${
+                proxyPhase === "connected"
+                  ? "on"
+                  : proxyPhase === "connecting"
+                    ? "connecting"
+                    : ""
+              }`}
+            />
+            <div className="fx-eng-text">
+              <div className="fx-eng-title">Прокси</div>
+              <div className="fx-eng-sub" title={proxySub}>
+                {proxySub}
+              </div>
+            </div>
+          </div>
+          <Switch
+            checked={proxyEnabled}
+            disabled={busy}
+            label="Переключить прокси"
+            onChange={(next) => void setProxy(next)}
+          />
+        </div>
+
+        <div className="fx-eng-row">
+          <div className="fx-eng-main">
+            <span className={`fx-dot ${dpiEnabled ? "on" : ""}`} />
+            <div className="fx-eng-text">
+              <div className="fx-eng-title">Обход DPI</div>
+              <div className="fx-eng-sub" title={dpiSub}>
+                {dpiSub}
+              </div>
+            </div>
+          </div>
+          <Switch
+            checked={dpiEnabled}
+            disabled={busy}
+            label="Переключить обход DPI"
+            onChange={(next) => void setDpi(next)}
+          />
+        </div>
+      </div>
+
+      <nav className="fx-nav" aria-label="Навигация">
+        {NAV_ITEMS.map((item) => {
+          const count = countFor(item.key);
+          return (
+            <button
+              key={item.key}
+              type="button"
+              className={`fx-nav-btn ${active === item.key ? "active" : ""}`}
+              onClick={() => setActive(item.key)}
+            >
+              <Icon name={item.icon} />
+              <span className="fx-nav-label">{item.label}</span>
+              {count ? <span className="fx-nav-count">{count}</span> : null}
+            </button>
+          );
+        })}
       </nav>
 
-      <div className="rail-bottom">
-        <button
-          type="button"
-          className="rail-theme"
-          title={`Оформление · тема «${theme}»`}
-          aria-label="Оформление"
-          onClick={() => openSheet("theme")}
-        >
-          <Icon name="palette" />
-        </button>
+      <div className="fx-side-foot">
+        <span className="fx-foot-pill">
+          <span className={`fx-foot-dot ${uiState?.elevated ? "elev" : ""}`} />
+          <span>{uiState?.elevated ? "Администратор" : "Обычные права"}</span>
+        </span>
+        <span className="fx-mono">:{Number(uiState?.proxyPort ?? 8080)}</span>
       </div>
     </aside>
   );
 }
 
-/** Шапка окна: заголовок раздела, состояние, кнопки окна. */
-export function TopBar({ title, sub }: { title: string; sub?: string }) {
-  const { appVersion, closeToTray, openSheet, active, setActive, proxyEnabled, dpiEnabled, health, proxyPhase } = useApp();
+export function TopBar() {
+  const {
+    active,
+    rt,
+    proxyEnabled,
+    dpiEnabled,
+    servers,
+    splitRows,
+    uiState,
+    appVersion,
+    closeToTray,
+  } = useApp();
 
-  const proxyUp = proxyEnabled && !!health?.proxyLocalOk;
-  const dpiUp = dpiEnabled && !!health?.dpiRunning;
-  const activeUp = proxyUp || dpiUp;
-  const connecting = (proxyPhase === "connecting" && proxyEnabled && !proxyUp) || ((proxyEnabled || dpiEnabled) && !activeUp);
+  const currentNav = NAV_ITEMS.find((n) => n.key === active);
+  const title = currentNav?.label ?? "Flux";
 
-  const canGoBack = active !== "shield";
+  let subtitle = "";
+  if (active === "shield") subtitle = "sing-box · winws2";
+  else if (active === "servers") subtitle = `${servers.length} узлов`;
+  else if (active === "routes") {
+    subtitle = `${routingLabel(String(uiState?.routingProfile ?? ""))} · ${splitRows.length} правил`;
+  } else if (active === "dpi") {
+    subtitle = String(uiState?.activeDpiProfile || "Профили и списки");
+  } else if (active === "net") {
+    subtitle = `Flux v${appVersion || "0.7.6"}`;
+  }
+
+  const isLive = Boolean(rt?.connected || proxyEnabled || dpiEnabled);
+  const elapsed = Number(rt?.sessionElapsedSeconds ?? 0);
 
   return (
-    <header className="sys-top" style={{ ["--wails-draggable" as string]: "drag" }}>
-      <button
-        type="button"
-        className="sys-back"
-        style={{
-          ["--wails-draggable" as string]: "no-drag",
-          opacity: canGoBack ? 1 : 0.35,
-          cursor: canGoBack ? "pointer" : "default",
-          pointerEvents: canGoBack ? "auto" : "none",
-        }}
-        onClick={() => setActive("shield")}
-        disabled={!canGoBack}
-        title={canGoBack ? "Назад на главный экран" : undefined}
-        aria-label="Назад"
-      >
-        <Icon name="back" />
-      </button>
-
-      <div className="sys-brand" style={{ ["--wails-draggable" as string]: "drag" }}>
-        <span className="sys-logo">F</span>
-        <span>{title}</span>
-        {sub ? (
-          <span className="sys-sub">{sub}</span>
-        ) : (
-          <span className="sys-sub">{`Flux ${appVersion ? "v" + appVersion : ""}`}</span>
-        )}
+    <header
+      className="fx-top"
+      style={{ ["--wails-draggable" as string]: "drag" }}
+    >
+      <div className="fx-top-left">
+        <span className="fx-top-title">{title}</span>
+        {subtitle ? <span className="fx-top-sub">{subtitle}</span> : null}
       </div>
 
-      <div className="sys-actions" style={{ ["--wails-draggable" as string]: "no-drag" }}>
-        <span className={`sys-state${activeUp ? " on" : connecting ? " warn" : ""}`}>
-          <i className="d" />
-          {activeUp ? "Защищено" : connecting ? "Запускается" : "Выключено"}
-        </span>
+      <div
+        className="fx-top-right"
+        style={{ ["--wails-draggable" as string]: "no-drag" }}
+      >
+        <div className={`fx-session-pill ${isLive ? "live" : ""}`}>
+          <span
+            className={`fx-dot ${isLive ? "on" : ""}`}
+            style={{ marginTop: 0, width: 6, height: 6 }}
+          />
+          <span>{isLive ? formatClock(elapsed) : "Простой"}</span>
+        </div>
 
-        <button
-          type="button"
-          className="icon-btn"
-          title="Оформление"
-          aria-label="Оформление"
-          onClick={() => openSheet("theme")}
-        >
-          <Icon name="palette" />
-        </button>
-
-        <div className="win-controls">
-          <button type="button" className="wc" title="Свернуть" onClick={() => void import("../wailsjs/runtime/runtime").then((m) => m.WindowMinimise())}>
-            <svg viewBox="0 0 10 10"><path d="M2 5h6" /></svg>
+        <div className="fx-win-btns">
+          <button
+            type="button"
+            className="fx-win-btn"
+            title="Свернуть"
+            aria-label="Свернуть окно"
+            onClick={() => {
+              void import("../wailsjs/runtime/runtime").then((m) =>
+                m.WindowMinimise(),
+              );
+            }}
+          >
+            —
           </button>
-          <button type="button" className="wc" title="Развернуть" onClick={() => void import("../wailsjs/runtime/runtime").then((m) => m.WindowToggleMaximise())}>
-            <svg viewBox="0 0 10 10"><rect x="2" y="2" width="6" height="6" rx="1" /></svg>
+          <button
+            type="button"
+            className="fx-win-btn"
+            title="Развернуть"
+            aria-label="Развернуть окно"
+            onClick={() => {
+              void import("../wailsjs/runtime/runtime").then((m) =>
+                m.WindowToggleMaximise(),
+              );
+            }}
+          >
+            □
           </button>
-          <button type="button" className="wc close" title="Свернуть в трей" onClick={closeToTray}>
-            <svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" /></svg>
+          <button
+            type="button"
+            className="fx-win-btn close"
+            title="Свернуть в трей"
+            aria-label="Свернуть в трей"
+            onClick={() => void closeToTray()}
+          >
+            ×
           </button>
         </div>
       </div>
@@ -121,106 +273,42 @@ export function TopBar({ title, sub }: { title: string; sub?: string }) {
   );
 }
 
-/** Заголовок экрана. */
-export function ScreenHead({
-  title,
-  sub,
-  right,
-}: {
-  title: string;
-  sub?: string;
-  right?: ReactNode;
-}) {
-  return (
-    <header className="screen-head">
-      <div>
-        <h1>{title}</h1>
-        {sub ? <p className="sub">{sub}</p> : null}
-      </div>
-      {right ? <div className="right">{right}</div> : null}
-    </header>
-  );
+export function BusyLine() {
+  const { busy } = useApp();
+  return <div className={`fx-busy-line ${busy ? "active" : ""}`} aria-hidden="true" />;
 }
 
-/** Переключатель. */
-export function Switch({
-  on,
-  onChange,
-  label,
-  disabled,
-}: {
-  on: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      disabled={disabled}
-      className={`sw${on ? " on" : ""}`}
-      onClick={() => onChange(!on)}
-    />
-  );
-}
-
-/** Полупрозрачная шторка снизу. */
-export function Sheet({
-  title,
-  subtitle,
-  onClose,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="sheet-layer open">
-      <div className="scrim" onClick={onClose} />
-      <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
-        <header className="sheet-head">
-          <div>
-            <h2>{title}</h2>
-            {subtitle ? <p className="sheet-sub">{subtitle}</p> : null}
-          </div>
-          <button type="button" className="sheet-close" aria-label="Закрыть" onClick={onClose}>
-            <Icon name="close" size={16} />
-          </button>
-        </header>
-        <div className="sheet-body">{children}</div>
-      </section>
-    </div>
-  );
-}
-
-/** Всплывающие уведомления. */
 export function Toasts() {
-  const { toast } = useApp();
+  const { toast, dismissToast, setActive } = useApp();
   if (!toast) return null;
-  return (
-    <div className="toast-stack">
-      <div className={`toast${toast.variant === "error" ? " bad" : ""}`} role="status">
-        <span className="toast-ico">
-          <Icon name={toast.variant === "error" ? "warn" : "check"} size={14} />
-        </span>
-        <span className="toast-text">{toast.text}</span>
-      </div>
-    </div>
-  );
-}
 
-/** Плашка загрузки. */
-export function BusyBar({ show }: { show: boolean }) {
-  if (!show) return null;
+  const variantClass = toast.variant === "error" ? "error" : "ok";
+
   return (
-    <div className="busy-bar">
-      <span className="spinner" />
-      <span>Применяю изменения…</span>
+    <div className="fx-toast-stack" role="status" aria-live="polite">
+      <div className={`fx-toast ${variantClass}`}>
+        <span style={{ flex: 1 }}>{toast.text}</span>
+        {toast.openLogs ? (
+          <button
+            type="button"
+            className="fx-btn fx-btn-sm"
+            onClick={() => {
+              setActive("net");
+              dismissToast();
+            }}
+          >
+            Логи
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="fx-toast-close"
+          aria-label="Закрыть уведомление"
+          onClick={dismissToast}
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 }

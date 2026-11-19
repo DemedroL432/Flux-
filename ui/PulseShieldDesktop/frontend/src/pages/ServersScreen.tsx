@@ -1,272 +1,517 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
-import { Icon } from "../icons";
-import { ScreenHead } from "../ui";
 import { detectCountry } from "../flags";
-import { formatLatency, latencyTone } from "../format";
+import {
+  formatDate,
+  formatLatency,
+  formatRemaining,
+  latencyTone,
+} from "../format";
+import { FlagBadge } from "../icons";
 
-type Server = {
-  id?: string;
-  name?: string;
-  host?: string;
-  port?: string;
-  protocol?: string;
-  source?: string;
-  fromSubscription?: boolean;
-  lastCheckOk?: boolean;
-  lastCheckLatencyMs?: number;
-  lastCheckDownloadMbps?: number;
-  recommended?: boolean;
-  premium?: boolean;
-};
-
-export type SortKey = "ping" | "name" | "country";
-
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: "ping", label: "По пингу" },
-  { key: "name", label: "По имени" },
-  { key: "country", label: "По стране" },
-];
-
-/** Сравнение по пингу: неотвечающие узлы всегда в конце. */
-function comparePing(a: Server, b: Server): number {
-  const pa = Number(a.lastCheckLatencyMs) || 0;
-  const pb = Number(b.lastCheckLatencyMs) || 0;
-  const oka = a.lastCheckOk && pa > 0;
-  const okb = b.lastCheckOk && pb > 0;
-  if (oka !== okb) return oka ? -1 : 1;
-  if (oka && okb && pa !== pb) return pa - pb;
-  return String(a.name || a.host || "").localeCompare(String(b.name || b.host || ""), "ru");
-}
-
-/** Сравнение по стране: сначала сгруппированные по стране, внутри — по пингу. */
-function compareCountry(a: Server, b: Server): number {
-  const ca = detectCountry(a.name, a.host)?.name || "яяя";
-  const cb = detectCountry(b.name, b.host)?.name || "яяя";
-  const d = ca.localeCompare(cb, "ru");
-  if (d !== 0) return d;
-  return comparePing(a, b);
-}
-
-export function useServerList() {
-  const { servers } = useApp();
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortKey>("ping");
-  const [groupByCountry, setGroupByCountry] = useState(false);
-
-  const all = useMemo(() => ((servers || []) as Server[]).slice(), [servers]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((s) => {
-      const country = detectCountry(s.name, s.host)?.name.toLowerCase() || "";
-      const hay = `${s.name || ""} ${s.host || ""} ${s.protocol || ""} ${country}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [all, query]);
-
-  const sorted = useMemo(() => {
-    const out = filtered.slice();
-    if (sort === "ping") out.sort(comparePing);
-    else if (sort === "country") out.sort(compareCountry);
-    else out.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
-    return out;
-  }, [filtered, sort]);
-
-  const groups = useMemo(() => {
-    if (!groupByCountry) return null;
-    const map = new Map<string, Server[]>();
-    for (const s of sorted) {
-      const key = detectCountry(s.name, s.host)?.name || "Не определена";
-      const arr = map.get(key);
-      if (arr) arr.push(s);
-      else map.set(key, [s]);
-    }
-    return Array.from(map.entries());
-  }, [sorted, groupByCountry]);
-
-  return { query, setQuery, sort, setSort, groupByCountry, setGroupByCountry, all, sorted, groups, total: all.length, shown: sorted.length };
-}
+type Any = Record<string, unknown>;
+type SortKey = "ping" | "country" | "name";
 
 export function ServersScreen() {
   const {
-    busy, selectServer, removeServer, retestAll, openSheet, activeServer, importFromClipboard,
+    uiState,
+    servers,
+    activeServer,
+    selectServer,
+    removeServer,
+    retestServer,
+    retestAll,
+    previewSubscription,
+    importText,
+    importFromClipboard,
+    applySubscription,
+    refreshSubscription,
+    clearSubscription,
+    busy,
   } = useApp();
-  const list = useServerList();
-  const [confirmId, setConfirmId] = useState<string | null>(null);
 
-  // Сбрасываем подтверждение удаления при уходе с экрана.
-  useEffect(() => () => setConfirmId(null), []);
+  const [subUrl, setSubUrl] = useState(String(uiState?.subscriptionUrl ?? ""));
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [manualKeys, setManualKeys] = useState("");
+  const [previewData, setPreviewData] = useState<Any | null>(null);
+  const [confirmClearSub, setConfirmClearSub] = useState(false);
 
-  const onRemove = useCallback(
-    async (id: string) => {
-      await removeServer(id);
-      setConfirmId(null);
-    },
-    [removeServer]
-  );
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("ping");
+  const [groupByCountry, setGroupByCountry] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const renderRow = (s: Server) => {
-    const id = String(s.id || "");
-    const isActive = !!activeServer && String(activeServer.id) === id;
-    const country = detectCountry(s.name, s.host);
-    const tone = latencyTone(Number(s.lastCheckLatencyMs));
-    const ping = Number(s.lastCheckLatencyMs) || 0;
-    const ok = !!s.lastCheckOk && ping > 0;
+  useEffect(() => {
+    setSubUrl(String(uiState?.subscriptionUrl ?? ""));
+  }, [uiState?.subscriptionUrl]);
 
-    return (
-      <div key={id} className={`server-row${isActive ? " sel" : ""}`}>
-        <button
-          type="button"
-          className="srv-pick"
-          disabled={busy}
-          onClick={() => void selectServer(id)}
-          aria-label={`Выбрать ${s.name || s.host}`}
-        >
-          <span className="srv-flag" title={country?.name || "Страна не определена"}>
-            {country ? country.flag : "🌐"}
-          </span>
-          <span className="srv-main">
-            <span className="srv-name">
-              {String(s.name || s.host || "")}
-              {isActive ? <span className="srv-active-dot" title="Активный узел" /> : null}
-            </span>
-            <span className="srv-sub">
-              {String(s.host || "")}
-              {s.port ? `:${s.port}` : ""}
-              {s.protocol ? ` · ${s.protocol}` : ""}
-            </span>
-          </span>
-        </button>
+  const activeId = String(uiState?.activeServerId ?? activeServer?.id ?? "");
+  const hasSub = Boolean(uiState?.subscriptionUrl);
+  const subExpires = Number(uiState?.subscriptionExpiresUnix ?? 0);
 
-        <span className={`srv-ping ${tone}`}>
-          {ok ? formatLatency(ping) : s.lastCheckOk === false ? "нет ответа" : "—"}
-        </span>
+  const enrichedServers = useMemo(() => {
+    return servers.map((srv) => {
+      const name = String(srv.name ?? "");
+      const host = String(srv.host ?? "");
+      const country = detectCountry(name, host);
+      const lat = Number(srv.lastCheckLatencyMs ?? 0);
+      return {
+        raw: srv,
+        id: String(srv.id ?? ""),
+        name,
+        host,
+        port: String(srv.port ?? ""),
+        proto: String(srv.protocol ?? ""),
+        fromSub: Boolean(srv.fromSubscription),
+        ok: Boolean(srv.lastCheckOk),
+        latency: lat,
+        countryCode: country?.code ?? "ZZ",
+        countryName: country?.name ?? "Прочие регионы",
+      };
+    });
+  }, [servers]);
 
-        <button
-          type="button"
-          className={`rule-del${confirmId === id ? " confirm" : ""}`}
-          title={confirmId === id ? "Нажмите ещё раз, чтобы удалить" : "Удалить узел"}
-          aria-label={`Удалить ${s.name || s.host}`}
-          disabled={busy}
-          onClick={() => (confirmId === id ? void onRemove(id) : setConfirmId(id))}
-          onBlur={() => setConfirmId((v) => (v === id ? null : v))}
-        >
-          <Icon name={confirmId === id ? "warn" : "trash"} size={14} />
-        </button>
-      </div>
-    );
-  };
+  const filteredSorted = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = enrichedServers.filter((item) => {
+      if (!q) return true;
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.host.toLowerCase().includes(q) ||
+        item.proto.toLowerCase().includes(q) ||
+        item.countryName.toLowerCase().includes(q)
+      );
+    });
+
+    list.sort((a, b) => {
+      if (sortBy === "ping") {
+        const la = a.latency > 0 ? a.latency : 999999;
+        const lb = b.latency > 0 ? b.latency : 999999;
+        if (la !== lb) return la - lb;
+        return a.name.localeCompare(b.name, "ru");
+      }
+      if (sortBy === "country") {
+        const cmp = a.countryName.localeCompare(b.countryName, "ru");
+        if (cmp !== 0) return cmp;
+        const la = a.latency > 0 ? a.latency : 999999;
+        const lb = b.latency > 0 ? b.latency : 999999;
+        return la - lb;
+      }
+      return a.name.localeCompare(b.name, "ru");
+    });
+
+    return list;
+  }, [enrichedServers, query, sortBy]);
+
+  const grouped = useMemo(() => {
+    if (!groupByCountry) {
+      return [{ code: "", title: "", items: filteredSorted }];
+    }
+    const map = new Map<
+      string,
+      { code: string; title: string; items: typeof filteredSorted }
+    >();
+    for (const item of filteredSorted) {
+      const key = item.countryName;
+      const existing = map.get(key);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        map.set(key, { code: item.countryCode, title: key, items: [item] });
+      }
+    }
+    return Array.from(map.values());
+  }, [filteredSorted, groupByCountry]);
+
+  async function handlePreview() {
+    if (!subUrl.trim()) return;
+    const res = await previewSubscription(subUrl.trim());
+    setPreviewData(res);
+  }
+
+  async function handleImportManual() {
+    if (!manualKeys.trim()) return;
+    const added = await importText(manualKeys.trim());
+    if (added > 0) {
+      setManualKeys("");
+      setShowImportPanel(false);
+    }
+  }
 
   return (
-    <>
-      <ScreenHead
-        title="Серверы"
-        sub={`${list.total} узлов${list.shown !== list.total ? ` · найдено ${list.shown}` : ""}`}
-        right={
-          <button type="button" className="chip mute" onClick={() => openSheet("server")}>
-            Подписка <Icon name="chev" size={14} />
+    <div>
+      {/* Subscription & Keys Top Section */}
+      <section className="fx-section fx-section-first">
+        <div className="fx-sec-head">
+          <div>
+            <div className="fx-sec-title">ПОДПИСКА И КЛЮЧИ</div>
+            <div className="fx-sec-desc">
+              {hasSub ? (
+                <>
+                  Активная подписка:{" "}
+                  <span style={{ color: "var(--text-primary)" }}>
+                    {String(uiState?.subscriptionProviderLabel || "Подключена")}
+                  </span>
+                  {subExpires > 0 && (
+                    <>
+                      {" "}
+                      · истекает {formatDate(subExpires)} (
+                      {formatRemaining(subExpires)})
+                    </>
+                  )}
+                </>
+              ) : (
+                "Вставьте ссылку подписки или импортируйте ключи из буфера обмена"
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="fx-btn fx-btn-sm fx-btn-ghost"
+            onClick={() => {
+              setShowImportPanel((prev) => !prev);
+              setConfirmClearSub(false);
+            }}
+          >
+            {showImportPanel ? "Скрыть ручной ввод" : "Ключи вручную / предпросмотр"}
           </button>
-        }
-      />
-
-      <div className="scr scroll">
-        <div className="tile">
-          <div className="field-row">
-            <input
-              className="field"
-              placeholder="Поиск по имени, хосту или стране"
-              value={list.query}
-              onChange={(e) => list.setQuery(e.target.value)}
-              aria-label="Поиск сервера"
-            />
-            {list.query ? (
-              <button type="button" className="btn sm soft" onClick={() => list.setQuery("")} title="Сбросить поиск">
-                <Icon name="close" size={14} />
-              </button>
-            ) : null}
-          </div>
-
-          <div className="seg" role="tablist" aria-label="Сортировка серверов">
-            {SORTS.map((s) => (
-              <button
-                key={s.key}
-                type="button"
-                role="tab"
-                aria-selected={list.sort === s.key}
-                className={list.sort === s.key ? "on" : ""}
-                onClick={() => list.setSort(s.key)}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="srv-actions">
-            <button type="button" className="btn sm soft" disabled={busy} onClick={() => void retestAll()}>
-              <Icon name="refresh" size={14} /> Проверить все
-            </button>
-            <button type="button" className="btn sm soft" disabled={busy} onClick={() => void importFromClipboard()}>
-              <Icon name="copy" size={14} /> Из буфера
-            </button>
-            <button type="button" className="btn sm soft" onClick={() => openSheet("speed")}>
-              <Icon name="gauge" size={14} /> Тест
-            </button>
-          </div>
         </div>
 
-        <div className="tile">
-          <div className="tile-head">
-            <h3>Узлы</h3>
+        <form
+          className="fx-bar"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (subUrl.trim()) void applySubscription(subUrl.trim());
+          }}
+        >
+          <input
+            type="text"
+            className="fx-well-input mono fx-bar-grow"
+            placeholder="https://... (URL подписки Clash / Sing-box / VLESS)"
+            value={subUrl}
+            onChange={(e) => setSubUrl(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="fx-btn fx-btn-primary"
+            disabled={busy || !subUrl.trim()}
+          >
+            Применить
+          </button>
+          {hasSub && (
             <button
               type="button"
-              className="more"
-              onClick={() => list.setGroupByCountry(!list.groupByCountry)}
-              title="Группировать по стране"
+              className="fx-btn"
+              disabled={busy}
+              onClick={() => void refreshSubscription()}
             >
-              {list.groupByCountry ? "Без групп" : "По странам"}
+              Обновить
+            </button>
+          )}
+          <button
+            type="button"
+            className="fx-btn"
+            disabled={busy}
+            onClick={() => void importFromClipboard()}
+          >
+            Из буфера
+          </button>
+          <button
+            type="button"
+            className="fx-btn"
+            disabled={busy || servers.length === 0}
+            onClick={() => void retestAll()}
+          >
+            Пинг всех
+          </button>
+        </form>
+
+        {/* Collapsible Inline Manual Import & Preview Panel */}
+        {showImportPanel && (
+          <div className="fx-well fx-well-pad" style={{ marginTop: 12 }}>
+            <div className="fx-sec-head" style={{ marginBottom: 8 }}>
+              <span className="fx-sec-title">РУЧНОЙ ИМПОРТ И ПРЕДПРОСМОТР</span>
+              <div className="fx-bar">
+                <button
+                  type="button"
+                  className="fx-btn fx-btn-sm"
+                  disabled={busy || !subUrl.trim()}
+                  onClick={() => void handlePreview()}
+                >
+                  Предпросмотр URL
+                </button>
+                {hasSub &&
+                  (confirmClearSub ? (
+                    <>
+                      <button
+                        type="button"
+                        className="fx-btn fx-btn-sm fx-btn-danger"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmClearSub(false);
+                          void clearSubscription();
+                        }}
+                      >
+                        Точно очистить подписку?
+                      </button>
+                      <button
+                        type="button"
+                        className="fx-btn fx-btn-sm fx-btn-ghost"
+                        onClick={() => setConfirmClearSub(false)}
+                      >
+                        Отмена
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fx-btn fx-btn-sm fx-btn-danger"
+                      disabled={busy}
+                      onClick={() => setConfirmClearSub(true)}
+                    >
+                      Очистить подписку
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            {previewData && (
+              <div
+                style={{
+                  padding: "8px 10px",
+                  marginBottom: 10,
+                  borderRadius: 5,
+                  border: "1px solid var(--hairline)",
+                  background: "var(--bg-canvas)",
+                  fontSize: 12,
+                }}
+              >
+                {previewData.ok ? (
+                  <div className="fx-bar" style={{ justifyContent: "space-between" }}>
+                    <span>
+                      Провайдер:{" "}
+                      <strong>
+                        {String(
+                          previewData.name ||
+                            previewData.providerLabel ||
+                            "Без названия",
+                        )}
+                      </strong>{" "}
+                      · формат{" "}
+                      <span className="fx-mono">{String(previewData.format || "—")}</span>
+                    </span>
+                    <span className="fx-tag good">
+                      {Number(previewData.total ?? 0)} серверов
+                    </span>
+                  </div>
+                ) : (
+                  <span style={{ color: "var(--bad)" }}>
+                    Ошибка предпросмотра: {String(previewData.error || "неизвестно")}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <textarea
+              rows={4}
+              className="fx-textarea mono"
+              placeholder="Вставьте один или несколько ключей (vless://, vmess://, trojan://, ss://, hy2://) или base64-содержимое…"
+              value={manualKeys}
+              onChange={(e) => setManualKeys(e.target.value)}
+            />
+            <div className="fx-bar" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+              <button
+                type="button"
+                className="fx-btn fx-btn-primary fx-btn-sm"
+                disabled={busy || !manualKeys.trim()}
+                onClick={() => void handleImportManual()}
+              >
+                Импортировать ключи
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Filter & Sort Controls */}
+      <section className="fx-section">
+        <div className="fx-sec-head">
+          <div className="fx-bar fx-bar-grow">
+            <input
+              type="text"
+              className="fx-well-input"
+              style={{ width: 250, maxWidth: "100%" }}
+              placeholder="Поиск узла по имени, адресу, стране…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+
+            <div className="fx-seg" role="group" aria-label="Сортировка серверов">
+              <button
+                type="button"
+                className={`fx-seg-btn ${sortBy === "ping" ? "active" : ""}`}
+                onClick={() => setSortBy("ping")}
+              >
+                По пингу
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${sortBy === "country" ? "active" : ""}`}
+                onClick={() => setSortBy("country")}
+              >
+                По стране
+              </button>
+              <button
+                type="button"
+                className={`fx-seg-btn ${sortBy === "name" ? "active" : ""}`}
+                onClick={() => setSortBy("name")}
+              >
+                По имени
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className={`fx-btn fx-btn-sm ${groupByCountry ? "fx-btn-primary" : ""}`}
+              onClick={() => setGroupByCountry((v) => !v)}
+            >
+              По странам
             </button>
           </div>
 
-          {list.total === 0 ? (
-            <div className="empty">
-              <Icon name="server" size={22} />
-              <p>Серверов нет. Импортируйте подписку или вставьте ссылку вручную.</p>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-                <button type="button" className="btn sm primary" onClick={() => openSheet("subscription")}>
-                  Подписка и ключи
-                </button>
-                <button type="button" className="btn sm soft" onClick={() => openSheet("server")}>
-                  Добавить узлы
-                </button>
-              </div>
-            </div>
-          ) : list.sorted.length === 0 ? (
-            <div className="empty">
-              <Icon name="info" size={20} />
-              <p>По запросу «{list.query}» ничего не найдено.</p>
-              <button type="button" className="btn sm soft" onClick={() => list.setQuery("")}>
-                Сбросить поиск
-              </button>
-            </div>
-          ) : list.groups ? (
-            <div className="srv-groups">
-              {list.groups.map(([country, items]) => (
-                <div key={country} className="srv-group">
-                  <div className="srv-group-head">
-                    <span>{country}</span>
-                    <span className="mute">{items.length}</span>
-                  </div>
-                  {items.map(renderRow)}
-                </div>
-              ))}
+          <span className="fx-mono" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+            Показано {filteredSorted.length} из {servers.length}
+          </span>
+        </div>
+
+        {/* Full-bleed Hairline Table */}
+        <div className="fx-list-wrap">
+          <div className="fx-thead">
+            <span className="fx-cell-grow">Узел</span>
+            <span style={{ width: 82 }}>Протокол</span>
+            <span style={{ width: 190 }}>Адрес</span>
+            <span style={{ width: 78, textAlign: "right" }}>Пинг</span>
+            <span style={{ width: 158, textAlign: "right" }}>Действия</span>
+          </div>
+
+          {filteredSorted.length === 0 ? (
+            <div className="fx-empty">
+              {servers.length === 0
+                ? "Список серверов пуст. Вставьте URL подписки или ключи выше."
+                : "По вашему запросу узлы не найдены."}
             </div>
           ) : (
-            <div className="row-list">{list.sorted.map(renderRow)}</div>
+            grouped.map((group) => (
+              <React.Fragment key={group.title || "all"}>
+                {groupByCountry && group.title && (
+                  <div className="fx-group-head">
+                    <FlagBadge code={group.code} name={group.title} />
+                    <span>{group.title}</span>
+                    <span className="fx-mono" style={{ opacity: 0.7 }}>
+                      ({group.items.length})
+                    </span>
+                  </div>
+                )}
+
+                {group.items.map((item) => {
+                  const isActive = item.id === activeId;
+                  const isConfirmDelete = confirmDeleteId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`fx-trow clickable ${isActive ? "selected" : ""}`}
+                      onClick={() => {
+                        setConfirmDeleteId(null);
+                        void selectServer(item.id);
+                      }}
+                    >
+                      <div
+                        className="fx-cell-grow"
+                        style={{ display: "flex", alignItems: "center", gap: 10 }}
+                      >
+                        <FlagBadge
+                          code={item.countryCode === "ZZ" ? undefined : item.countryCode}
+                          name={item.countryName}
+                        />
+                        <span className="fx-truncate" style={{ fontWeight: isActive ? 600 : 500 }}>
+                          {item.name}
+                        </span>
+                        {isActive && <span className="fx-tag accent">Активен</span>}
+                        {!item.fromSub && (
+                          <span className="fx-tag">Ручной</span>
+                        )}
+                      </div>
+
+                      <div style={{ width: 82 }}>
+                        <span className="fx-tag">{item.proto.toUpperCase()}</span>
+                      </div>
+
+                      <div
+                        style={{ width: 190, color: "var(--text-muted)", fontSize: 12 }}
+                        className="fx-mono fx-truncate fx-select-text"
+                        title={`${item.host}:${item.port}`}
+                      >
+                        {item.host}:{item.port}
+                      </div>
+
+                      <div
+                        style={{ width: 78, textAlign: "right" }}
+                        className={`fx-lat ${latencyTone(item.latency)}`}
+                      >
+                        {item.latency > 0 ? formatLatency(item.latency) : "—"}
+                      </div>
+
+                      <div
+                        style={{
+                          width: 158,
+                          display: "flex",
+                          justifyContent: "flex-end",
+                          gap: 6,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="fx-btn fx-btn-sm fx-btn-ghost"
+                          disabled={busy}
+                          onClick={() => void retestServer(item.id)}
+                          title="Замерить пинг узла"
+                        >
+                          Пинг
+                        </button>
+
+                        {isConfirmDelete ? (
+                          <button
+                            type="button"
+                            className="fx-btn fx-btn-sm fx-btn-danger"
+                            disabled={busy}
+                            onClick={() => {
+                              setConfirmDeleteId(null);
+                              void removeServer(item.id);
+                            }}
+                          >
+                            Удалить?
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="fx-btn fx-btn-sm fx-btn-ghost"
+                            disabled={busy}
+                            onClick={() => setConfirmDeleteId(item.id)}
+                          >
+                            Удалить
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))
           )}
         </div>
-      </div>
-    </>
+      </section>
+    </div>
   );
 }

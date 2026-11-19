@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at link time: -ldflags "-X main.Version=1.2.3" (release). Default matches desktop line 0.7.x.
-var Version = "0.7.5"
+var Version = "0.7.6"
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -50,7 +50,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 12, G: 14, B: 20, A: 1},
+		BackgroundColour: &options.RGBA{R: 14, G: 16, B: 19, A: 1},
 		Windows: &winopt.Options{
 			Theme:        winopt.Dark,
 			BackdropType: winopt.Mica,
