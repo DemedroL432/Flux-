@@ -462,6 +462,7 @@ export namespace main {
 	    routingProfiles: models.RoutingProfile[];
 	    strictRoutingMode: boolean;
 	    autoUpdateEnabled: boolean;
+	    autostartEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UIState(source);
@@ -499,6 +500,7 @@ export namespace main {
 	        this.routingProfiles = this.convertValues(source["routingProfiles"], models.RoutingProfile);
 	        this.strictRoutingMode = source["strictRoutingMode"];
 	        this.autoUpdateEnabled = source["autoUpdateEnabled"];
+	        this.autostartEnabled = source["autostartEnabled"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -131,6 +131,7 @@ type UIState struct {
 	RoutingProfiles           []models.RoutingProfile `json:"routingProfiles"`
 	StrictRoutingMode         bool                    `json:"strictRoutingMode"`
 	AutoUpdateEnabled         bool                    `json:"autoUpdateEnabled"`
+	AutostartEnabled          bool                    `json:"autostartEnabled"`
 }
 
 type UIServer struct {
@@ -324,6 +325,7 @@ func (a *App) startup(ctx context.Context) {
 	go a.emitRealtimeStatsLoop()
 	go a.runSleepWakeWatchdog()
 	go a.runAutoUpdateLoop()
+	go a.syncAutostartOnStartup()
 }
 
 // runSleepWakeWatchdog обнаруживает выход из сна/гибернации по скачку настенных часов.
@@ -533,6 +535,7 @@ func (a *App) GetUIState() UIState {
 		RoutingProfiles:           s.RoutingProfiles,
 		StrictRoutingMode:         s.StrictRoutingMode,
 		AutoUpdateEnabled:         !s.AutoUpdateDisabled,
+		AutostartEnabled:          s.AutostartEnabled,
 	}
 }
 
@@ -580,6 +583,43 @@ func (a *App) SetAutoUpdateEnabled(enabled bool) error {
 	return a.updateConfig(func(cfg *models.AppConfig) {
 		cfg.AutoUpdateDisabled = !enabled
 	})
+}
+
+func (a *App) SetAutostartEnabled(enabled bool) error {
+	exePath, err := os.Executable()
+	if err == nil {
+		if eval, evalErr := filepath.EvalSymlinks(exePath); evalErr == nil && eval != "" {
+			exePath = eval
+		}
+	} else if enabled {
+		return fmt.Errorf("не удалось определить путь к программе: %w", err)
+	}
+	if err := setWindowsAutostart(enabled, exePath); err != nil {
+		return err
+	}
+	return a.updateConfig(func(cfg *models.AppConfig) {
+		cfg.AutostartEnabled = enabled
+	})
+}
+
+func (a *App) syncAutostartOnStartup() {
+	if a == nil || a.st == nil {
+		return
+	}
+	if !a.st.Snapshot().AutostartEnabled {
+		return
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		bootlog.Append(fmt.Sprintf("autostart sync failed: %v", err))
+		return
+	}
+	if eval, evalErr := filepath.EvalSymlinks(exePath); evalErr == nil && eval != "" {
+		exePath = eval
+	}
+	if err := setWindowsAutostart(true, exePath); err != nil {
+		bootlog.Append(fmt.Sprintf("autostart sync failed: %v", err))
+	}
 }
 
 func (a *App) SetProxyMode(mode string) error {

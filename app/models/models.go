@@ -119,6 +119,8 @@ type AppConfig struct {
 	LocalInboundPassword string `json:"localInboundPassword,omitempty" yaml:"localInboundPassword,omitempty"`
 	// AutoUpdateDisabled — отключить фоновую автопроверку и автоустановку обновлений с GitHub Releases (по умолчанию false = автообновление включено).
 	AutoUpdateDisabled bool `json:"autoUpdateDisabled,omitempty" yaml:"autoUpdateDisabled,omitempty"`
+	// AutostartEnabled — запускать Flux автоматически при входе в Windows (свёрнутым в трей).
+	AutostartEnabled bool `json:"autostartEnabled,omitempty" yaml:"autostartEnabled,omitempty"`
 }
 
 // DpiListIsEnabled возвращает true, если список zapret lists/<name>.txt не помечен как выключенный.

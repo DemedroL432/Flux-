@@ -44,6 +44,7 @@ import {
   SetActiveDPIProfile,
   SetActiveServer,
   SetAutoUpdateEnabled,
+  SetAutostartEnabled,
   SetDPIEnabled,
   SetDnsSettings,
   SetDpiListContent,
@@ -141,6 +142,8 @@ type Ctx = {
   activateLicense: (code: string) => Promise<void>;
   autoUpdateEnabled: boolean;
   setAutoUpdateEnabled: (on: boolean) => Promise<void>;
+  autostartEnabled: boolean;
+  setAutostartEnabled: (on: boolean) => Promise<void>;
   checkUpdates: () => Promise<void>;
   updateInfo: Any | null;
   updateProgress: { phase: string; pct: number } | null;
@@ -621,6 +624,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const autoUpdateEnabled = uiState?.autoUpdateEnabled !== false;
+  const autostartEnabled = !!uiState?.autostartEnabled;
 
   const setAutoUpdateEnabled = useCallback(
     async (on: boolean) => {
@@ -628,6 +632,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await SetAutoUpdateEnabled(on);
       });
       notify(on ? "Автообновление включено" : "Автообновление отключено");
+    },
+    [notify, withBusy]
+  );
+
+  const setAutostartEnabled = useCallback(
+    async (on: boolean) => {
+      const ok = await withBusy(async () => {
+        await SetAutostartEnabled(on);
+        return true;
+      });
+      if (ok) {
+        notify(on ? "Автозапуск с Windows включён" : "Автозапуск с Windows отключён");
+      }
     },
     [notify, withBusy]
   );
@@ -746,6 +763,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activateLicense,
     autoUpdateEnabled,
     setAutoUpdateEnabled,
+    autostartEnabled,
+    setAutostartEnabled,
     checkUpdates,
     updateInfo,
     updateProgress,

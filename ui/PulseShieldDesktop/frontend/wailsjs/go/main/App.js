@@ -222,6 +222,10 @@ export function SetAutoUpdateEnabled(arg1) {
   return window['go']['main']['App']['SetAutoUpdateEnabled'](arg1);
 }
 
+export function SetAutostartEnabled(arg1) {
+  return window['go']['main']['App']['SetAutostartEnabled'](arg1);
+}
+
 export function SetDPIEnabled(arg1) {
   return window['go']['main']['App']['SetDPIEnabled'](arg1);
 }

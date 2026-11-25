@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at link time: -ldflags "-X main.Version=1.2.3" (release). Default matches desktop line 0.7.x.
-var Version = "0.7.7"
+var Version = "0.7.8"
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -47,6 +47,7 @@ func main() {
 		MinHeight:     640,
 		DisableResize: false,
 		Frameless:     true,
+		StartHidden:   hasStartHiddenArg(os.Args[1:]),
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -123,4 +124,14 @@ func quotePSArgs(args []string) []string {
 
 func psQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
+}
+
+func hasStartHiddenArg(args []string) bool {
+	for _, a := range args {
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case "--autostart", "--minimized":
+			return true
+		}
+	}
+	return false
 }

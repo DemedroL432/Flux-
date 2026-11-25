@@ -113,6 +113,8 @@ export function SetActiveServer(arg1:string):Promise<void>;
 
 export function SetAutoUpdateEnabled(arg1:boolean):Promise<void>;
 
+export function SetAutostartEnabled(arg1:boolean):Promise<void>;
+
 export function SetDPIEnabled(arg1:boolean):Promise<void>;
 
 export function SetDnsSettings(arg1:string,arg2:string,arg3:string):Promise<void>;

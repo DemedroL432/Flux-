@@ -101,7 +101,7 @@ export function Sidebar() {
           </span>
           <span className="fx-brand-name">Flux</span>
         </div>
-        <span className="fx-ver">v{appVersion || "0.7.7"}</span>
+        <span className="fx-ver">v{appVersion || "0.7.8"}</span>
       </div>
 
       <div className="fx-engines">
@@ -206,7 +206,7 @@ export function TopBar() {
   } else if (active === "dpi") {
     subtitle = String(uiState?.activeDpiProfile || "Профили и списки");
   } else if (active === "net") {
-    subtitle = `Flux v${appVersion || "0.7.7"}`;
+    subtitle = `Flux v${appVersion || "0.7.8"}`;
   }
 
   const isLive = Boolean(rt?.connected || proxyEnabled || dpiEnabled);

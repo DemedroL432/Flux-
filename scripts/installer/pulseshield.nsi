@@ -57,6 +57,7 @@ SectionEnd
 
 Section "Uninstall"
   nsExec::ExecToStack 'taskkill /F /IM Flux.exe /IM PulseShield.exe /IM PulseShieldDesktop.exe /T'
+  nsExec::ExecToStack 'schtasks /Delete /TN "FluxAutostart" /F'
   Delete "$DESKTOP\Flux.lnk"
   RMDir /r "$SMPROGRAMS\Flux"
   RMDir /r "$INSTDIR"

@@ -92,6 +92,8 @@ export function NetworkLogsScreen() {
     activateLicense,
     autoUpdateEnabled,
     setAutoUpdateEnabled,
+    autostartEnabled,
+    setAutostartEnabled,
     checkUpdates,
     updateInfo,
     updateProgress,
@@ -200,7 +202,7 @@ export function NetworkLogsScreen() {
         </div>
 
         <span className="fx-mono" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-          Flux v{appVersion || "0.7.7"}
+          Flux v{appVersion || "0.7.8"}
         </span>
       </div>
 
@@ -559,7 +561,7 @@ export function NetworkLogsScreen() {
                 <div>
                   <div className="fx-sec-title">ПРИЛОЖЕНИЕ</div>
                   <div className="fx-sec-desc">
-                    Полная остановка движков и закрытие фонового процесса в трее.
+                    Автозапуск с Windows, полная остановка движков и закрытие фонового процесса в трее.
                   </div>
                 </div>
                 <button
@@ -569,6 +571,23 @@ export function NetworkLogsScreen() {
                 >
                   Выйти из Flux
                 </button>
+              </div>
+
+              <div className="fx-well fx-well-pad" style={{ marginTop: 10 }}>
+                <div className="fx-bar" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 500 }}>Автозапуск с Windows</div>
+                    <div className="fx-sec-desc" style={{ marginTop: 2 }}>
+                      Запускать Flux свёрнутым в трей при входе в систему без запроса UAC.
+                    </div>
+                  </div>
+                  <Switch
+                    checked={autostartEnabled}
+                    disabled={busy}
+                    label="Автозапуск с Windows"
+                    onChange={(next) => void setAutostartEnabled(next)}
+                  />
+                </div>
               </div>
             </section>
           </div>
@@ -584,7 +603,7 @@ export function NetworkLogsScreen() {
                 <div className="fx-sec-title">ОБНОВЛЕНИЯ ПРИЛОЖЕНИЯ</div>
                 <div className="fx-sec-desc">
                   Установлена версия{" "}
-                  <span className="fx-mono">v{appVersion || "0.7.7"}</span>
+                  <span className="fx-mono">v{appVersion || "0.7.8"}</span>
                 </div>
               </div>
 
