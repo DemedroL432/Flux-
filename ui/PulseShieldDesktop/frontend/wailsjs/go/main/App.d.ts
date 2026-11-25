@@ -19,6 +19,8 @@ export function ApplyDpiAutoSnapshot(arg1:string):Promise<string>;
 
 export function ApplyDpiAutotunePreset():Promise<string>;
 
+export function ApplyLatestUpdate():Promise<void>;
+
 export function ApplyRoutingJSON(arg1:string):Promise<void>;
 
 export function ApplyRuntime():Promise<void>;
@@ -108,6 +110,8 @@ export function SaveRoutingJSON(arg1:string):Promise<string>;
 export function SetActiveDPIProfile(arg1:string):Promise<void>;
 
 export function SetActiveServer(arg1:string):Promise<void>;
+
+export function SetAutoUpdateEnabled(arg1:boolean):Promise<void>;
 
 export function SetDPIEnabled(arg1:boolean):Promise<void>;
 

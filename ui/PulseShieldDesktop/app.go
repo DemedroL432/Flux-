@@ -71,6 +71,8 @@ type App struct {
 
 	applyJobSeq atomic.Uint64 // монотонный id для событий runtime-apply (только Deferred)
 
+	autoUpdateBusy atomic.Bool
+
 	deviceOnce       sync.Once
 	cachedDeviceHID  string // короткая подпись для компактного UI
 	cachedDeviceFull string // полный SHA-256 hex HWID (на экране поддержки)
@@ -128,6 +130,7 @@ type UIState struct {
 	DPIProfiles               []models.DPIProfile     `json:"dpiProfiles"`
 	RoutingProfiles           []models.RoutingProfile `json:"routingProfiles"`
 	StrictRoutingMode         bool                    `json:"strictRoutingMode"`
+	AutoUpdateEnabled         bool                    `json:"autoUpdateEnabled"`
 }
 
 type UIServer struct {
@@ -320,6 +323,7 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.emitRealtimeStatsLoop()
 	go a.runSleepWakeWatchdog()
+	go a.runAutoUpdateLoop()
 }
 
 // runSleepWakeWatchdog обнаруживает выход из сна/гибернации по скачку настенных часов.
@@ -528,6 +532,7 @@ func (a *App) GetUIState() UIState {
 		DPIProfiles:               s.DPIProfiles,
 		RoutingProfiles:           s.RoutingProfiles,
 		StrictRoutingMode:         s.StrictRoutingMode,
+		AutoUpdateEnabled:         !s.AutoUpdateDisabled,
 	}
 }
 
@@ -571,10 +576,19 @@ func (a *App) SetStrictRoutingMode(enabled bool) error {
 	return err
 }
 
+func (a *App) SetAutoUpdateEnabled(enabled bool) error {
+	return a.updateConfig(func(cfg *models.AppConfig) {
+		cfg.AutoUpdateDisabled = !enabled
+	})
+}
+
 func (a *App) SetProxyMode(mode string) error {
 	m := models.ProxyMode(mode)
 	if m != models.ProxyModeSystem && m != models.ProxyModeTun && m != models.ProxyModeDirect {
 		return fmt.Errorf("unsupported proxy mode: %s", mode)
+	}
+	if m == models.ProxyModeTun && !isProcessElevated() {
+		return fmt.Errorf("режим TUN требует запуска от имени администратора")
 	}
 	return a.updateConfig(func(cfg *models.AppConfig) { cfg.ProxyMode = m })
 }

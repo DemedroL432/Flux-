@@ -86,12 +86,12 @@ func (a *App) routingSplitViewLocked() ([]RoutingSplitEntry, error) {
 		}
 		out = append(out, entries...)
 	}
-	if rp, ok := snap.ActiveRoutingProfile(); ok {
-		for _, r := range rp.Rules {
-			out = append(out, flattenRouteRule(r, "profile")...)
-		}
+	for _, r := range config.EffectiveProfileRules(snap) {
+		out = append(out, flattenRouteRule(r, "profile")...)
 	}
-	if !snap.StrictRoutingMode {
+	resolved := models.ResolveRoutingProfileAlias(snap.RoutingProfile)
+	isBuiltinMode := resolved == models.RoutingModeManual || resolved == models.RoutingModeFullProxy || resolved == models.RoutingModeGlobal
+	if !snap.StrictRoutingMode && !isBuiltinMode {
 		builtins := config.DefaultRoutingLibraryRules(listsDir)
 		for _, r := range builtins {
 			out = append(out, flattenRouteRule(r, "library")...)
@@ -128,11 +128,6 @@ func (a *App) AddUserRoutingRule(pattern string, target string) error {
 		return fmt.Errorf("правило добавлено, но список custom-dpi.txt не обновлён: %w", err)
 	}
 	a.invalidateRoutingDpiPanelCaches()
-
-	// Перезапускаем DPI, чтобы новые домены реально попали в фильтры.
-	if snap.DPIEnabled && a.dpiRunner != nil && a.dpiRunner.IsRunning() {
-		go func() { _ = a.runApplySync(false, 0) }()
-	}
 	return nil
 }
 
@@ -162,10 +157,6 @@ func (a *App) RemoveUserRoutingRuleAt(index int) error {
 		return fmt.Errorf("правило удалено, но список custom-dpi.txt не обновлён: %w", err)
 	}
 	a.invalidateRoutingDpiPanelCaches()
-
-	if snap.DPIEnabled && a.dpiRunner != nil && a.dpiRunner.IsRunning() {
-		go func() { _ = a.runApplySync(false, 0) }()
-	}
 	return nil
 }
 
@@ -194,10 +185,6 @@ func (a *App) RemoveUserRoutingRule(pattern string) error {
 		return fmt.Errorf("правило удалено, но список custom-dpi.txt не обновлён: %w", err)
 	}
 	a.invalidateRoutingDpiPanelCaches()
-
-	if snap.DPIEnabled && a.dpiRunner != nil && a.dpiRunner.IsRunning() {
-		go func() { _ = a.runApplySync(false, 0) }()
-	}
 	return nil
 }
 
@@ -389,13 +376,17 @@ func (a *App) VerifyRouteTarget(raw string) (*RouteDecision, error) {
 		source string
 		rules  []models.RouteRule
 	}
-	layers := []layer{{source: "process", rules: config.ProcessProxyRules(&snap)}}
+	resolved := models.ResolveRoutingProfileAlias(snap.RoutingProfile)
+	isBuiltinMode := resolved == models.RoutingModeManual || resolved == models.RoutingModeFullProxy || resolved == models.RoutingModeGlobal
+	layers := []layer{{source: "user", rules: snap.UserRoutingRules}}
+	if !isBuiltinMode {
+		layers = append(layers, layer{source: "process", rules: config.ProcessProxyRules(&snap)})
+	}
 	if kind != "process" {
-		layers = append(layers, layer{source: "user", rules: snap.UserRoutingRules})
-		if rp, ok := snap.ActiveRoutingProfile(); ok {
-			layers = append(layers, layer{source: "profile", rules: rp.Rules})
+		if profRules := config.EffectiveProfileRules(snap); len(profRules) > 0 {
+			layers = append(layers, layer{source: "profile", rules: profRules})
 		}
-		if !snap.StrictRoutingMode {
+		if !snap.StrictRoutingMode && !isBuiltinMode {
 			layers = append(layers, layer{source: "library", rules: config.DefaultRoutingLibraryRules(listsDir)})
 		}
 	}

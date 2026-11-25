@@ -117,6 +117,8 @@ type AppConfig struct {
 	LocalInboundUser string `json:"localInboundUser,omitempty" yaml:"localInboundUser,omitempty"`
 	// LocalInboundPassword — пароль для локального mixed inbound и секрет Clash API ядра; генерируется при первом запуске.
 	LocalInboundPassword string `json:"localInboundPassword,omitempty" yaml:"localInboundPassword,omitempty"`
+	// AutoUpdateDisabled — отключить фоновую автопроверку и автоустановку обновлений с GitHub Releases (по умолчанию false = автообновление включено).
+	AutoUpdateDisabled bool `json:"autoUpdateDisabled,omitempty" yaml:"autoUpdateDisabled,omitempty"`
 }
 
 // DpiListIsEnabled возвращает true, если список zapret lists/<name>.txt не помечен как выключенный.
@@ -201,22 +203,25 @@ func (c AppConfig) LicenseActive() bool {
 	return time.Now().Unix() < c.LicenseExpiresUnix
 }
 
-// Имена двух режимов маршрутизации (дублируют config-константы,
+// Имена режимов маршрутизации (дублируют config-константы,
 // чтобы models не зависел от config).
 const (
+	RoutingModeGlobal    = "global"
 	RoutingModeFullProxy = "full-proxy"
 	RoutingModeManual    = "manual"
 )
 
-// ResolveRoutingProfileAlias приводит сохранённое имя профиля к одному из двух режимов.
+// ResolveRoutingProfileAlias приводит сохранённое имя профиля к одному из поддерживаемых режимов.
 // Старые имена (default, all-proxy, rf-smart-split, selective-proxy, gaming-friendly,
 // all-direct, bypass-russia) остались в конфигах прошлых версий и должны продолжать работать.
 func ResolveRoutingProfileAlias(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "default", "all-proxy", "full-proxy":
 		return RoutingModeFullProxy
+	case "global", "global-proxy":
+		return RoutingModeGlobal
 	case "all-direct", "bypass-russia", "bypass-rf", "rf-smart-split",
-		"selective-proxy", "gaming-friendly", "manual":
+		"selective-proxy", "gaming-friendly", "general-dpi-bypass", "manual":
 		return RoutingModeManual
 	default:
 		return name
@@ -263,6 +268,15 @@ func (c AppConfig) ActiveRoutingProfile() (RoutingProfile, bool) {
 	case RoutingModeFullProxy:
 		return RoutingProfile{
 			Name:  RoutingModeFullProxy,
+			Final: "proxy",
+			Rules: []RouteRule{
+				{Name: "local-direct", Domains: []string{"*.local", "localhost", "*.lan"}, Action: RouteDirect},
+				{Name: "private-lan-direct", CIDRs: []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"}, Action: RouteDirect},
+			},
+		}, true
+	case RoutingModeGlobal:
+		return RoutingProfile{
+			Name:  RoutingModeGlobal,
 			Final: "proxy",
 			Rules: []RouteRule{
 				{Name: "local-direct", Domains: []string{"*.local", "localhost", "*.lan"}, Action: RouteDirect},

@@ -29,16 +29,23 @@ func TestProxyDpiXboxSuffixesPairwiseDisjoint(t *testing.T) {
 	assertNoOverlap(xbox, ru, "xbox-dns", "ru-direct")
 }
 
-// TestBuiltinRoutingPresetsAreTwoModes проверяет, что встроенных режимов ровно два
-// и у них правильные финальные правила.
-func TestBuiltinRoutingPresetsAreTwoModes(t *testing.T) {
+// TestBuiltinRoutingPresetsAreThreeModes проверяет, что встроенных режимов три
+// (global, full-proxy, manual) и у каждого корректное финальное правило.
+func TestBuiltinRoutingPresetsAreThreeModes(t *testing.T) {
 	presets := builtinRoutingPresets()
-	if len(presets) != 2 {
-		t.Fatalf("expected exactly 2 builtin modes, got %d", len(presets))
+	if len(presets) != 3 {
+		t.Fatalf("expected exactly 3 builtin modes, got %d", len(presets))
 	}
 	byName := map[string]models.RoutingProfile{}
 	for _, p := range presets {
 		byName[p.Name] = p
+	}
+	glob, ok := byName[RoutingModeGlobal]
+	if !ok {
+		t.Fatal("global mode missing")
+	}
+	if glob.Final != "proxy" {
+		t.Fatalf("global final = %q, want proxy", glob.Final)
 	}
 	full, ok := byName[RoutingModeFullProxy]
 	if !ok {
@@ -56,10 +63,16 @@ func TestBuiltinRoutingPresetsAreTwoModes(t *testing.T) {
 	}
 }
 
-// TestBothModesKeepRuDirect проверяет, что в обоих режимах российские домены
-// и приватные сети уходят напрямую — иначе РФ-сайты поедут через туннель.
-func TestBothModesKeepRuDirect(t *testing.T) {
+// TestRuDirectAndGlobalIsolation проверяет, что full-proxy и manual оставляют РФ напрямую,
+// а global содержит только локальные адреса (100% скрытие GEO).
+func TestRuDirectAndGlobalIsolation(t *testing.T) {
+	byName := map[string]models.RoutingProfile{}
 	for _, p := range builtinRoutingPresets() {
+		byName[p.Name] = p
+	}
+
+	for _, name := range []string{RoutingModeFullProxy, RoutingModeManual} {
+		p := byName[name]
 		var hasRuTLD, hasRuServices, hasLAN bool
 		for _, r := range p.Rules {
 			if r.Name == "ru-tld-direct" && r.Action == models.RouteDirect && len(r.DomainSuffixes) > 0 {
@@ -76,27 +89,66 @@ func TestBothModesKeepRuDirect(t *testing.T) {
 			t.Fatalf("%s: ruTLD=%v ruServices=%v lan=%v", p.Name, hasRuTLD, hasRuServices, hasLAN)
 		}
 	}
-}
 
-// TestProcessRulesPresent проверяет, что правила по процессам есть в обоих режимах:
-// они матчатся только по процессам и не пересекаются с доменными правилами.
-func TestProcessRulesPresent(t *testing.T) {
-	for _, p := range builtinRoutingPresets() {
-		found := false
-		for _, r := range p.Rules {
-			if r.Name == "process-proxy-map" && len(r.Processes) > 0 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("%s: process-proxy-map rule missing", p.Name)
+	glob := byName[RoutingModeGlobal]
+	for _, r := range glob.Rules {
+		if r.Name == "ru-tld-direct" || r.Name == "ru-services-direct" || r.Name == "process-proxy-map" {
+			t.Fatalf("global mode must not contain %q (breaks full GEO hiding)", r.Name)
 		}
 	}
 }
 
+// TestManualHasNoImposedProxyLists проверяет, что ни один встроенный режим не навязывает
+// скрытое проксирование Steam, Discord, YouTube, нейросетей или process-proxy-map:
+// пользователь сам выбирает правила или включает full-proxy/global.
+func TestManualHasNoImposedProxyLists(t *testing.T) {
+	byName := map[string]models.RoutingProfile{}
+	for _, p := range builtinRoutingPresets() {
+		byName[p.Name] = p
+	}
+
+	for _, name := range []string{RoutingModeGlobal, RoutingModeFullProxy, RoutingModeManual} {
+		p := byName[name]
+		for _, r := range p.Rules {
+			if r.Name == "process-proxy-map" || r.Name == "ai-services-via-proxy" ||
+				r.Name == "proxy-only-messengers-steam" || r.Name == "dpi-bypass-media" {
+				t.Fatalf("%s must not impose rule %q", name, r.Name)
+			}
+			if r.Action == models.RouteProxy {
+				t.Fatalf("%s must not contain built-in proxy rules (got %q)", name, r.Name)
+			}
+		}
+	}
+}
+
+func TestApplyRoutingBuiltinUpgradeStripsLegacySteam(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RoutingBuiltinRev = 8
+	cfg.ProcessProxyMap = map[string]bool{
+		"steam.exe":          true,
+		"Steam.exe":          true,
+		"steamwebhelper.exe": true,
+		"custom.exe":         true,
+	}
+
+	if !ApplyRoutingBuiltinUpgrade(&cfg) {
+		t.Fatal("expected upgrade from rev 8 to rev 11")
+	}
+	if cfg.RoutingBuiltinRev != CurrentRoutingBuiltinRev {
+		t.Fatalf("RoutingBuiltinRev = %d, want %d", cfg.RoutingBuiltinRev, CurrentRoutingBuiltinRev)
+	}
+	for _, k := range []string{"steam.exe", "Steam.exe", "steamwebhelper.exe"} {
+		if _, ok := cfg.ProcessProxyMap[k]; ok {
+			t.Fatalf("expected legacy %q stripped from ProcessProxyMap", k)
+		}
+	}
+	if !cfg.ProcessProxyMap["custom.exe"] {
+		t.Fatal("custom process entry must be preserved")
+	}
+}
+
 // TestMergeBuiltinRoutingProfilesMigratesOldNames проверяет миграцию пяти старых
-// профилей на два режима без потери пользовательских профилей.
+// профилей на три режима без потери пользовательских профилей.
 func TestMergeBuiltinRoutingProfilesMigratesOldNames(t *testing.T) {
 	cfg := &models.AppConfig{
 		RoutingProfile: "rf-smart-split",
@@ -106,6 +158,7 @@ func TestMergeBuiltinRoutingProfilesMigratesOldNames(t *testing.T) {
 			{Name: "gaming-friendly", Final: "direct"},
 			{Name: "rf-smart-split", Final: "direct"},
 			{Name: "all-direct", Final: "direct"},
+			{Name: "general-dpi-bypass", Final: "direct"},
 			{Name: "my-custom", Final: "direct"},
 		},
 	}
@@ -119,6 +172,9 @@ func TestMergeBuiltinRoutingProfilesMigratesOldNames(t *testing.T) {
 	for _, p := range cfg.RoutingProfiles {
 		names[p.Name]++
 	}
+	if names[RoutingModeGlobal] != 1 {
+		t.Fatalf("global count = %d, want 1", names[RoutingModeGlobal])
+	}
 	if names[RoutingModeFullProxy] != 1 {
 		t.Fatalf("full-proxy count = %d, want 1", names[RoutingModeFullProxy])
 	}
@@ -128,7 +184,7 @@ func TestMergeBuiltinRoutingProfilesMigratesOldNames(t *testing.T) {
 	if names["my-custom"] != 1 {
 		t.Fatal("user-created profile must survive migration")
 	}
-	for _, old := range []string{"default", "selective-proxy", "gaming-friendly", "rf-smart-split", "all-direct"} {
+	for _, old := range []string{"default", "selective-proxy", "gaming-friendly", "rf-smart-split", "all-direct", "general-dpi-bypass"} {
 		if names[old] != 0 {
 			t.Fatalf("legacy profile %q must be gone, found %d", old, names[old])
 		}
@@ -146,7 +202,7 @@ func TestMergeBuiltinRoutingProfilesResetsUnknownActive(t *testing.T) {
 	if cfg.RoutingProfile != RoutingModeManual {
 		t.Fatalf("active = %q, want manual", cfg.RoutingProfile)
 	}
-	if len(cfg.RoutingProfiles) != 2 {
-		t.Fatalf("expected both modes after merge, got %d", len(cfg.RoutingProfiles))
+	if len(cfg.RoutingProfiles) != 3 {
+		t.Fatalf("expected all 3 modes after merge, got %d", len(cfg.RoutingProfiles))
 	}
 }

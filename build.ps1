@@ -1,7 +1,7 @@
 ﻿# Корневая точка входа для сборки Windows (обёртка над scripts/build_windows.ps1).
 # Пример: .\build.ps1 -Version 0.7.1 -BuildInstaller
 param(
-  [string]$Version = "0.7.6",
+  [string]$Version = "0.7.7",
   [string]$GitHubOwner = "DemedroL432",
   [string]$GitHubRepo = "Flux-",
   [string]$CoreBinaryPath = ".\third_party\core\sing-box.exe",

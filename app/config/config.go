@@ -97,17 +97,7 @@ func DefaultConfig() models.AppConfig {
 		ProxyMode: models.ProxyModeSystem,
 		ProxyPort: 8080,
 		DnsPreset: "dhcp",
-		ProcessProxyMap: map[string]bool{
-			"Telegram.exe":       true,
-			"telegram.exe":       true,
-			"Cursor.exe":         true,
-			"cursor.exe":         true,
-			"Discord.exe":        true,
-			"discord.exe":        true,
-			"steam.exe":          true,
-			"Steam.exe":          true,
-			"steamwebhelper.exe": true,
-		},
+		ProcessProxyMap: map[string]bool{},
 		// Zapret-профили подставляет SyncZapretPresetProfiles из zapret/presets/*.txt рядом с exe.
 		DPIProfiles:       []models.DPIProfile{},
 		ActiveDPIProfile:  PreferredZapretPresetName,
@@ -153,6 +143,9 @@ func LoadOrCreate() (models.AppConfig, error) {
 	SyncZapretPresetProfiles(&cfg)
 	changed := MergeBuiltinRoutingProfiles(&cfg)
 	if ApplyRoutingBuiltinUpgrade(&cfg) {
+		changed = true
+	}
+	if NormalizeUserRoutingRules(&cfg) {
 		changed = true
 	}
 	if MergeExternalRoutingProfiles(&cfg) {

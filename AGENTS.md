@@ -44,7 +44,7 @@ Response expectations
 - For diagnosis, separate confirmed findings from hypotheses. Avoid broad speculative investigation without evidence.
 - Ask for clarification only when missing information materially affects architecture, safety, data loss or expected behavior.
 Versioning and GitHub environment
-- Current target version: 0.7.6
+- Current target version: 0.7.7
 - GitHub repository: DemedroL432/Flux- (https://github.com/DemedroL432/Flux-.git)
 - GitHub user: DemedroL432 (75789021+DemedroL432@users.noreply.github.com)
 - Personal Access Token is available via user environment variables: $env:GITHUB_TOKEN and $env:GH_TOKEN.

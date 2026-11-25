@@ -2,8 +2,12 @@ package core
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
+	"pulseshield/app/config"
 	"pulseshield/app/models"
 )
 
@@ -106,13 +110,17 @@ func TestBuildRouteRules_DefaultProfileOrder(t *testing.T) {
 		},
 	}
 	rules := buildRouteRules(cfg)
-	if len(rules) < 3 {
-		t.Fatalf("expected at least private-direct, process and user rules, got %d", len(rules))
+	if len(rules) < 4 {
+		t.Fatalf("expected at least sniff, private-direct, process and user rules, got %d", len(rules))
 	}
-	// Первое правило — всегда ip_is_private: true -> direct
-	priv := rules[0].(map[string]any)
+	// Первое правило — sniff, затем ip_is_private: true -> direct
+	sniff := rules[0].(map[string]any)
+	if sniff["action"] != "sniff" {
+		t.Fatalf("expected first rule action=sniff, got %#v", rules[0])
+	}
+	priv := rules[1].(map[string]any)
 	if got, _ := priv["ip_is_private"].(bool); !got {
-		t.Fatalf("expected first rule ip_is_private, got %#v", rules[0])
+		t.Fatalf("expected second rule ip_is_private, got %#v", rules[1])
 	}
 	// Ищем пользовательское правило: оно должно присутствовать и направлять в direct
 	var foundUserRule bool
@@ -399,5 +407,168 @@ func TestRenderSingBoxConfig_EmitsClashAPIWhenLocalPasswordEmpty(t *testing.T) {
 	mixed := doc["inbounds"].([]any)[0].(map[string]any)
 	if _, ok := mixed["users"]; ok {
 		t.Fatalf("mixed inbound must NOT have users, got %#v", mixed["users"])
+	}
+}
+
+func TestBuildResilientOutbounds_NoUrltestHijack(t *testing.T) {
+	cfg := models.AppConfig{
+		ProxyEnabled:   true,
+		ProxyMode:      models.ProxyModeSystem,
+		ActiveServerID: "nl-selected",
+		Servers: []models.Server{
+			{
+				ID:                 "ru-fast",
+				Name:               "Россия Москва",
+				Host:               "ru1.example.com",
+				Port:               "443",
+				UUID:               "11111111-2222-3333-4444-555555555555",
+				Params:             map[string]string{"security": "tls", "sni": "ru1.example.com"},
+				LastCheckOK:        true,
+				LastCheckLatencyMs: 12,
+			},
+			{
+				ID:                 "nl-selected",
+				Name:               "Нидерланды",
+				Host:               "nl1.example.com",
+				Port:               "443",
+				UUID:               "22222222-2222-3333-4444-555555555555",
+				Params:             map[string]string{"security": "tls", "sni": "nl1.example.com"},
+				LastCheckOK:        true,
+				LastCheckLatencyMs: 85,
+			},
+		},
+	}
+
+	outbounds, err := buildResilientOutbounds(cfg, cfg.Servers[1])
+	if err != nil {
+		t.Fatalf("buildResilientOutbounds: %v", err)
+	}
+	for _, raw := range outbounds {
+		m := raw.(map[string]any)
+		if m["type"] == "urltest" {
+			t.Fatalf("urltest group must not be created (causes silent hijack to RU node): %#v", m)
+		}
+	}
+	proxyOut := outbounds[0].(map[string]any)
+	if proxyOut["tag"] != "proxy" || proxyOut["server"] != "nl1.example.com" {
+		t.Fatalf("expected proxy outbound strictly pinned to nl1.example.com, got %#v", proxyOut)
+	}
+}
+
+func TestRenderSingBoxConfig_AllModesCheckWithBinary(t *testing.T) {
+	singBox := filepath.Join("..", "..", "third_party", "core", "sing-box.exe")
+	_, statErr := os.Stat(singBox)
+	haveBinary := statErr == nil
+
+	base := config.DefaultConfig()
+	base.ProxyEnabled = true
+	base.ActiveServerID = "nl-node"
+	base.Servers = []models.Server{
+		{
+			ID:       "nl-node",
+			Name:     "NL",
+			Host:     "nl.example.com",
+			Port:     "443",
+			UUID:     "123e4567-e89b-12d3-a456-426614174000",
+			RawVLESS: "vless://123e4567-e89b-12d3-a456-426614174000@nl.example.com:443?security=tls&sni=nl.example.com#NL",
+			Params:   map[string]string{"security": "tls", "sni": "nl.example.com"},
+		},
+	}
+	base.UserRoutingRules = []models.RouteRule{
+		{Name: "user:*.example.net", Domains: []string{"*.example.net"}, Action: models.RouteProxy},
+		{Name: "user:chatgpt.com", DomainSuffixes: []string{"chatgpt.com"}, Action: models.RouteProxy},
+	}
+
+	for _, proxyMode := range []models.ProxyMode{models.ProxyModeSystem, models.ProxyModeTun} {
+		for _, routingMode := range []string{config.RoutingModeGlobal, config.RoutingModeFullProxy, config.RoutingModeManual} {
+			name := string(proxyMode) + "_" + routingMode
+			t.Run(name, func(t *testing.T) {
+				cfg := base
+				cfg.ProxyMode = proxyMode
+				cfg.RoutingProfile = routingMode
+
+				raw, err := RenderSingBoxConfig(cfg, t.TempDir())
+				if err != nil {
+					t.Fatalf("RenderSingBoxConfig: %v", err)
+				}
+
+				var doc map[string]any
+				if err := json.Unmarshal(raw, &doc); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+
+				route := doc["route"].(map[string]any)
+				rules := route["rules"].([]any)
+				if rules[0].(map[string]any)["action"] != "sniff" {
+					t.Fatalf("expected sniff rule first, got %#v", rules[0])
+				}
+
+				hasHijackDNS := false
+				hasWildcardDomainBug := false
+				hasConvertedSuffix := false
+				for _, rRaw := range rules {
+					rMap := rRaw.(map[string]any)
+					if rMap["action"] == "hijack-dns" {
+						hasHijackDNS = true
+					}
+					if doms, ok := rMap["domain"].([]any); ok {
+						for _, d := range doms {
+							if s, _ := d.(string); s == "*.example.net" || s == "*.local" {
+								hasWildcardDomainBug = true
+							}
+						}
+					}
+					if sufs, ok := rMap["domain_suffix"].([]any); ok {
+						for _, s := range sufs {
+							if s == "example.net" {
+								hasConvertedSuffix = true
+							}
+						}
+					}
+				}
+				if hasWildcardDomainBug {
+					t.Fatalf("wildcard pattern leaked into domain instead of domain_suffix")
+				}
+				if !hasConvertedSuffix {
+					t.Fatalf("expected *.example.net converted to domain_suffix example.net")
+				}
+
+				if proxyMode == models.ProxyModeTun {
+					if !hasHijackDNS {
+						t.Fatalf("TUN mode must include hijack-dns rule")
+					}
+					tun := doc["inbounds"].([]any)[1].(map[string]any)
+					if tun["stack"] != "mixed" {
+						t.Fatalf("TUN stack = %v, want mixed", tun["stack"])
+					}
+					if tun["strict_route"] != false {
+						t.Fatalf("TUN strict_route = %v, want false", tun["strict_route"])
+					}
+					addrs, _ := tun["address"].([]any)
+					if len(addrs) < 1 || addrs[0] != "172.19.0.1/30" {
+						t.Fatalf("TUN must specify IPv4 address 172.19.0.1/30, got %#v", tun["address"])
+					}
+				}
+
+				dnsCfg := doc["dns"].(map[string]any)
+				_, hasDNSRules := dnsCfg["rules"]
+				if routingMode == config.RoutingModeGlobal && hasDNSRules {
+					t.Fatalf("global mode must send all DNS through DoH proxy without .ru direct DNS rules")
+				}
+				if routingMode != config.RoutingModeGlobal && !hasDNSRules {
+					t.Fatalf("%s mode must keep .ru direct DNS rules", routingMode)
+				}
+
+				if haveBinary {
+					path := filepath.Join(t.TempDir(), "sing-box.json")
+					if err := os.WriteFile(path, raw, 0o644); err != nil {
+						t.Fatalf("write config: %v", err)
+					}
+					if out, err := exec.Command(singBox, "check", "-c", path).CombinedOutput(); err != nil {
+						t.Fatalf("sing-box check failed: %v\n%s\n%s", err, out, raw)
+					}
+				}
+			})
+		}
 	}
 }

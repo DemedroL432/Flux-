@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -92,6 +93,10 @@ func (m *Manager) Apply(cfg models.AppConfig) error {
 			return err
 		}
 		if confChanged || !m.adapter.IsRunning() {
+			if confChanged && m.adapter.IsRunning() {
+				_, clashSec := cfg.LocalProxyAuth()
+				_ = CloseAllClashConnections(clashSec)
+			}
 			logFile, logPath, err := OpenLogFile("core")
 			if err == nil {
 				// Закрываем предыдущий лог-файл: без этого каждый рестарт sing-box
@@ -108,6 +113,7 @@ func (m *Manager) Apply(cfg models.AppConfig) error {
 			}
 			KillStraySingBoxOnListenPort(cfg.ListenPort())
 			KillStraySingBoxOnListenPort(SingBoxClashAPIPort)
+			rotateOversizedSingBoxLog(filepath.Join(runDir, "sing-box.log"), 5*1024*1024)
 			if err := m.adapter.Start("run", "-c", confPath); err != nil {
 				m.status = "error: " + err.Error()
 				return err
@@ -214,4 +220,19 @@ func (m *Manager) ForceStopForShutdown(listenPort int) {
 	KillStraySingBoxOnListenPort(listenPort)
 	KillStraySingBoxOnListenPort(SingBoxClashAPIPort)
 	m.status = "stopped"
+}
+
+func rotateOversizedSingBoxLog(logPath string, maxBytes int64) {
+	if maxBytes <= 0 || strings.TrimSpace(logPath) == "" {
+		return
+	}
+	info, err := os.Stat(logPath)
+	if err != nil || info.Size() <= maxBytes {
+		return
+	}
+	backup := logPath + ".prev"
+	_ = os.Remove(backup)
+	if err := os.Rename(logPath, backup); err != nil {
+		_ = os.Truncate(logPath, 0)
+	}
 }

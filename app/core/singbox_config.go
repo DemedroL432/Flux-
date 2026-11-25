@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,14 +67,18 @@ func RenderSingBoxConfig(cfg models.AppConfig, runDir string) ([]byte, error) {
 		},
 	}
 	if cfg.ProxyMode == models.ProxyModeTun {
+		tunAddrs := []string{"172.19.0.1/30"}
+		if hostHasGlobalIPv6() {
+			tunAddrs = append(tunAddrs, "fdfe:dcba:9876::1/126")
+		}
 		tun := map[string]any{
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "pulse-tun",
-			"inet4_address":  "172.19.0.1/30",
+			"address":        tunAddrs,
 			"auto_route":     true,
-			"strict_route":   true,
-			"stack":          "system",
+			"strict_route":   false,
+			"stack":          "mixed",
 		}
 		inbounds = append(inbounds, tun)
 	}
@@ -84,6 +87,8 @@ func RenderSingBoxConfig(cfg models.AppConfig, runDir string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	isGlobal := models.ResolveRoutingProfileAlias(cfg.RoutingProfile) == models.RoutingModeGlobal
 
 	route := map[string]any{
 		"rules":                   buildRouteRules(cfg),
@@ -100,7 +105,7 @@ func RenderSingBoxConfig(cfg models.AppConfig, runDir string) ([]byte, error) {
 			"output":    filepath.Join(runDir, "sing-box.log"),
 			"timestamp": true,
 		},
-		"dns":       buildDNSConfig(cfg.ProxyMode == models.ProxyModeTun),
+		"dns":       buildDNSConfig(cfg.ProxyMode == models.ProxyModeTun, !isGlobal),
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"route":     route,
@@ -125,136 +130,30 @@ func RenderSingBoxConfig(cfg models.AppConfig, runDir string) ([]byte, error) {
 	return raw, nil
 }
 
-func serverProtocolPriority(s models.VlessServer) int {
-	proto := protocolOf(s)
-	hostLow := strings.ToLower(strings.TrimSpace(s.Host))
-	nameLow := strings.ToLower(strings.TrimSpace(s.Name))
-	isRU := strings.HasPrefix(hostLow, "ru") || strings.Contains(nameLow, "россия") || strings.Contains(nameLow, "russia")
-	ruPenalty := 0
-	if isRU {
-		ruPenalty = 3
-	}
-	switch proto {
-	case "hysteria2", "tuic", "anytls":
-		return 1 + ruPenalty // QUIC/TLS-in-TLS с обфускацией — отличная устойчивость к ТСПУ
-	case "hysteria":
-		return 2 + ruPenalty
-	case "shadowsocks", "vmess":
-		return 3 + ruPenalty
-	case "socks", "http", "wireguard":
-		return 4 + ruPenalty
-	}
-	sec := strings.ToLower(strings.TrimSpace(s.Params["security"]))
-	netType := strings.ToLower(strings.TrimSpace(s.Params["type"]))
-	if sec == "reality" && (netType == "tcp" || netType == "" || netType == "grpc") {
-		return 1 + ruPenalty // VLESS Reality (Vision / gRPC) — максимальная скорость и маскировка
-	}
-	if proto == "trojan" || netType == "grpc" {
-		return 2 + ruPenalty
-	}
-	return 3 + ruPenalty // WebSocket — резервный транспорт (часто режется до 1 Мбит/с)
-}
-
-// buildResilientOutbounds создаёт мультипротокольный пул узлов (VLESS Reality TCP/gRPC, Hysteria2, Trojan, WebSocket).
-// Если в конфигурации больше одного совместимого сервера, создаётся группа urltest с тегом "proxy",
-// которая автоматически тестирует живой канал (HTTPS 204) и бесшовно переключается между протоколами
-// и серверами при блокировке ТСПУ или падении узла, без единого разрыва для пользователя.
-func buildResilientOutbounds(cfg models.AppConfig, active models.Server) ([]any, error) {
+// buildResilientOutbounds строит outbound с тегом "proxy" строго на выбранный активный сервер.
+// Группа urltest намеренно не используется, чтобы sing-box никогда не перекидывал трафик
+// пользователя на другой (например, российский) узел подписки с меньшим пингом.
+func buildResilientOutbounds(_ models.AppConfig, active models.Server) ([]any, error) {
 	primaryOut, err := buildVLESSOutbound(active)
 	if err != nil {
 		return nil, err
 	}
+	primaryOut["tag"] = "proxy"
 
-	all := cfg.EffectiveServers()
-	candidates := make([]models.VlessServer, 0, len(all))
-	for _, srv := range all {
-		if srv.ID == active.ID {
-			continue
-		}
-		candidates = append(candidates, srv)
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		a, b := candidates[i], candidates[j]
-		if a.LastCheckOK != b.LastCheckOK {
-			return a.LastCheckOK
-		}
-		pa, pb := serverProtocolPriority(a), serverProtocolPriority(b)
-		if pa != pb {
-			return pa < pb
-		}
-		if a.LastCheckLatencyMs > 0 && b.LastCheckLatencyMs > 0 && a.LastCheckLatencyMs != b.LastCheckLatencyMs {
-			return a.LastCheckLatencyMs < b.LastCheckLatencyMs
-		}
-		return a.Recommended && !b.Recommended
-	})
-
-	var poolNodes []map[string]any
-	var poolTags []string
-
-	primaryTag := "vless-active"
-	primaryCopy := make(map[string]any, len(primaryOut))
-	for k, v := range primaryOut {
-		primaryCopy[k] = v
-	}
-	primaryCopy["tag"] = primaryTag
-	poolNodes = append(poolNodes, primaryCopy)
-	poolTags = append(poolTags, primaryTag)
-
-	seenID := map[string]bool{active.ID: true}
-	const maxBackups = 9
-	for _, srv := range candidates {
-		if len(poolTags) >= 1+maxBackups {
-			break
-		}
-		if seenID[srv.ID] {
-			continue
-		}
-		nodeOut, err := buildVLESSOutbound(models.Server(srv))
-		if err != nil {
-			continue
-		}
-		seenID[srv.ID] = true
-		tag := fmt.Sprintf("vless-backup-%d", len(poolTags))
-		nodeOut["tag"] = tag
-		poolNodes = append(poolNodes, nodeOut)
-		poolTags = append(poolTags, tag)
-	}
-
-	var outbounds []any
-	if len(poolTags) == 1 {
-		primaryOut["tag"] = "proxy"
-		outbounds = append(outbounds, primaryOut)
-	} else {
-		urltestGroup := map[string]any{
-			"type":                        "urltest",
-			"tag":                         "proxy",
-			"outbounds":                   poolTags,
-			"url":                         "https://cp.cloudflare.com/generate_204",
-			"interval":                    "15s",
-			"tolerance":                   50,
-			"idle_timeout":                "10m",
-			"interrupt_exist_connections": false,
-		}
-		outbounds = append(outbounds, urltestGroup)
-		for _, n := range poolNodes {
-			outbounds = append(outbounds, n)
-		}
-	}
-
-	outbounds = append(outbounds,
+	outbounds := []any{
+		primaryOut,
 		map[string]any{"type": "direct", "tag": "direct"},
 		map[string]any{"type": "block", "tag": "block"},
-	)
+	}
 	return outbounds, nil
 }
 
 // buildDNSConfig строит DNS-секцию: DoH/DoT через proxy + надёжный bootstrap-резолвер для
 // хостнейма VLESS-сервера.
-// ВАЖНО: мы НЕ используем type:local для bootstrap-резолвера, потому что в sing-box 1.12+
-// type:local при наличии виртуальных адаптеров (Radmin VPN, Hamachi) или Smart DNS в Windows
-// перехватывает чужой DNS (например 111.88.96.55:53) и падает с i/o timeout при резолве VLESS-хоста!
-// Вместо этого используем быстрый российский anycast DNS (77.88.8.8) напрямую.
-func buildDNSConfig(tunMode bool) map[string]any {
+// При ruDirect=true российские домены (.ru/.su/.рф) резолвятся напрямую через bootstrapServer,
+// а весь остальной трафик идёт через DoH внутри proxy-туннеля.
+// При ruDirect=false (режим global) абсолютно все DNS-запросы идут через DoH внутри прокси.
+func buildDNSConfig(tunMode bool, ruDirect bool) map[string]any {
 	bootstrapServer := map[string]any{
 		"type":        "udp",
 		"tag":         SingBoxBootstrapDNSTag,
@@ -265,7 +164,7 @@ func buildDNSConfig(tunMode bool) map[string]any {
 		bootstrapServer["detour"] = "direct"
 	}
 
-	return map[string]any{
+	dnsCfg := map[string]any{
 		"independent_cache": true,
 		"servers": []any{
 			map[string]any{
@@ -290,6 +189,15 @@ func buildDNSConfig(tunMode bool) map[string]any {
 		"final":    SingBoxPrimaryDNSTag,
 		"strategy": "prefer_ipv4",
 	}
+	if ruDirect {
+		dnsCfg["rules"] = []any{
+			map[string]any{
+				"domain_suffix": []string{"ru", "su", "xn--p1ai"},
+				"server":        SingBoxBootstrapDNSTag,
+			},
+		}
+	}
+	return dnsCfg
 }
 
 var resolvedHostCache sync.Map
@@ -548,6 +456,41 @@ func tlsPeerNameForVLESS(s models.Server, security string) (string, error) {
 	return "", fmt.Errorf("для VLESS с TLS/Reality укажите SNI (поля sni / serverName или доменный host сервера); подключение по IP без имени маскирует только после добавления SNI под ваш сертификат/Reality")
 }
 
+func hostHasGlobalIPv6() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if strings.EqualFold(iface.Name, "pulse-tun") {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.To4() != nil {
+				continue
+			}
+			if ip.IsGlobalUnicast() && !ip.IsPrivate() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hostLooksLikeIP(host string) bool {
 	host = strings.TrimSpace(host)
 	if host == "" {
@@ -618,6 +561,14 @@ func buildRouteRules(cfg models.AppConfig) []any {
 	merged := config.MergeSingBoxRoutingRules(cfg, listsDir)
 
 	var rules []any
+	// Сниффинг TLS/HTTP заголовков: необходим, чтобы доменные правила работали и в TUN, и при подключении по IP.
+	rules = append(rules, map[string]any{"action": "sniff", "timeout": "300ms"})
+
+	// TUN-режим: перехватываем DNS до ip_is_private, чтобы запросы к 192.168.x.1:53 роутера не утекали мимо прокси.
+	if cfg.ProxyMode == models.ProxyModeTun {
+		rules = append(rules, map[string]any{"protocol": "dns", "action": "hijack-dns"})
+	}
+
 	// Быстрый путь: локальные сети без тяжёлого сопоставления доменов.
 	rules = append(rules, map[string]any{"ip_is_private": true, "outbound": "direct"})
 
@@ -635,12 +586,41 @@ func buildRouteRules(cfg models.AppConfig) []any {
 			// иначе пустое правило {"outbound": "proxy"} в середине списка перекрывает все правила после него!
 			continue
 		}
-		rule := map[string]any{}
-		if len(r.Domains) > 0 {
-			rule["domain"] = r.Domains
+		var exactDomains []string
+		var suffixes []string
+		suffixSeen := make(map[string]bool, len(r.DomainSuffixes)+len(r.Domains))
+		for _, s := range r.DomainSuffixes {
+			clean := strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "*."), ".")
+			if clean != "" && !suffixSeen[clean] {
+				suffixSeen[clean] = true
+				suffixes = append(suffixes, clean)
+			}
 		}
-		if len(r.DomainSuffixes) > 0 {
-			rule["domain_suffix"] = r.DomainSuffixes
+		for _, d := range r.Domains {
+			t := strings.TrimSpace(d)
+			if t == "" {
+				continue
+			}
+			if strings.HasPrefix(t, "*.") || strings.HasPrefix(t, ".") {
+				clean := strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(t), "*."), ".")
+				if clean != "" && !suffixSeen[clean] {
+					suffixSeen[clean] = true
+					suffixes = append(suffixes, clean)
+				}
+				continue
+			}
+			exactDomains = append(exactDomains, t)
+		}
+
+		if len(exactDomains) == 0 && len(suffixes) == 0 && len(r.CIDRs) == 0 && len(r.Processes) == 0 {
+			continue
+		}
+		rule := map[string]any{}
+		if len(exactDomains) > 0 {
+			rule["domain"] = exactDomains
+		}
+		if len(suffixes) > 0 {
+			rule["domain_suffix"] = suffixes
 		}
 		if len(r.CIDRs) > 0 {
 			rule["ip_cidr"] = r.CIDRs

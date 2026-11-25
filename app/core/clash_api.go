@@ -98,6 +98,29 @@ func putClashProxyGroupOnce(secret, urlStr string, body []byte) (int, error) {
 	return resp.StatusCode, nil
 }
 
+// CloseAllClashConnections закрывает все открытые соединения в sing-box через Clash API DELETE /connections.
+// Это сбрасывает старые HTTP/2 и keep-alive потоки при смене сервера, маршрутов или режима захвата.
+func CloseAllClashConnections(apiSecret string) error {
+	secret := strings.TrimSpace(apiSecret)
+	client := NewLoopbackAwareHTTPClient(2 * time.Second)
+	req, err := http.NewRequest(http.MethodDelete, ClashConnectionsURL(), nil)
+	if err != nil {
+		return err
+	}
+	if secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("clash api DELETE %s -> %s", ClashConnectionsURL(), resp.Status)
+	}
+	return nil
+}
+
 // ActiveConnection — одно соединение из Clash API sing-box.
 type ActiveConnection struct {
 	ID       string `json:"id"`

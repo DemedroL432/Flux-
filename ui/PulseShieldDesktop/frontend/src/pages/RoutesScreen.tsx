@@ -50,7 +50,12 @@ export function RoutesScreen() {
   const [expanded, setExpanded] = useState(false);
 
   const routingProfile = String(uiState?.routingProfile || "manual");
-  const availableProfiles: string[] =
+  const modeOrder: Record<string, number> = {
+    manual: 0,
+    "full-proxy": 1,
+    global: 2,
+  };
+  const availableProfiles: string[] = (
     Array.isArray(uiState?.routingProfiles) && uiState.routingProfiles.length > 0
       ? (uiState.routingProfiles as unknown[])
           .map((p) =>
@@ -59,7 +64,8 @@ export function RoutesScreen() {
               : String((p as Record<string, unknown>)?.name ?? ""),
           )
           .filter(Boolean)
-      : ["manual", "full-proxy"];
+      : ["manual", "full-proxy", "global"]
+  ).sort((a, b) => (modeOrder[a] ?? 99) - (modeOrder[b] ?? 99));
 
   const counts = useMemo(() => {
     const res = {
@@ -124,9 +130,11 @@ export function RoutesScreen() {
           <div>
             <div className="fx-sec-title">РЕЖИМ МАРШРУТИЗАЦИИ</div>
             <div className="fx-sec-desc">
-              {routingProfile === "full-proxy"
-                ? "Весь трафик направляется через прокси-туннель (кроме локальных адресов и пользовательских исключений)."
-                : "Домены распределяются по вашим правилам, профилям и активным спискам обхода DPI."}
+              {routingProfile === "global"
+                ? "Весь внешний трафик (включая .ru, все программы и DNS) идёт через прокси для полного скрытия GEO."
+                : routingProfile === "full-proxy"
+                  ? "Весь зарубежный интернет идёт через прокси; российские сайты и банки (.ru / .рф / Госуслуги) идут напрямую."
+                  : "Через прокси идут только ваши правила; весь остальной трафик идёт напрямую (Steam, Discord, YouTube и др. обрабатываются Обходом DPI по своим спискам)."}
             </div>
           </div>
 
@@ -152,7 +160,7 @@ export function RoutesScreen() {
           <div>
             <div className="fx-sec-title">ДОБАВИТЬ ПОЛЬЗОВАТЕЛЬСКОЕ ПРАВИЛО</div>
             <div className="fx-sec-desc">
-              Пользовательские правила имеют наивысший приоритет. Действие «Обход DPI»
+              Пользовательские правила имеют наивысший приоритет (выше процессов и профиля). Действие «Обход DPI»
               направляет домен напрямую в обход прокси для обработки winws2.
             </div>
           </div>
@@ -162,7 +170,7 @@ export function RoutesScreen() {
           <input
             type="text"
             className="fx-well-input mono fx-bar-grow"
-            placeholder="Домен, суффикс или CIDR (например example.com, *.domain.org, 10.0.0.0/8)"
+            placeholder="Домен, *.маска, URL, IP/CIDR или process.exe"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
           />

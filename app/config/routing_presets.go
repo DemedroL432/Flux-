@@ -6,6 +6,8 @@ import "pulseshield/app/models"
 // РІСЃС‘, С‡С‚Рѕ СЂР°РЅСЊС€Рµ РЅР°Р·С‹РІР°Р»РѕСЃСЊ default/selective-proxy/gaming-friendly/rf-smart-split/all-direct,
 // СЃРІРѕСЂР°С‡РёРІР°РµС‚СЃСЏ РІ РѕРґРёРЅ РёР· СЌС‚РёС… РґРІСѓС… (СЃРј. MigrateRoutingProfileNames).
 const (
+	// RoutingModeGlobal — «Глобальный (Скрытие GEO)»: весь внешний трафик через прокси (только LAN напрямую).
+	RoutingModeGlobal = "global"
 	// RoutingModeFullProxy вЂ” В«РџРѕР»РЅС‹Р№ РїСЂРѕРєСЃРёВ»: РІСЃС‘, РєСЂРѕРјРµ Р»РѕРєР°Р»СЊРЅРѕРіРѕ Рё Р Р¤, РёРґС‘С‚ С‡РµСЂРµР· С‚СѓРЅРЅРµР»СЊ.
 	RoutingModeFullProxy = "full-proxy"
 	// RoutingModeManual вЂ” В«РџСЂРѕРєСЃРё СЃ СЂСѓС‡РЅС‹РјРё РїСЂР°РІРёР»Р°РјРёВ»: С‡РµСЂРµР· С‚СѓРЅРЅРµР»СЊ РёРґС‘С‚ С‚РѕР»СЊРєРѕ С‚Рѕ,
@@ -15,24 +17,25 @@ const (
 
 // RoutingModeNames вЂ” РїРѕСЂСЏРґРѕРє РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ РІ UI.
 func RoutingModeNames() []string {
-	return []string{RoutingModeFullProxy, RoutingModeManual}
+	return []string{RoutingModeGlobal, RoutingModeFullProxy, RoutingModeManual}
 }
 
-// IsKnownRoutingMode СЃРѕРѕР±С‰Р°РµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РёРјСЏ РѕРґРЅРёРј РёР· РґРІСѓС… РїРѕРґРґРµСЂР¶РёРІР°РµРјС‹С… СЂРµР¶РёРјРѕРІ.
+// IsKnownRoutingMode СЃРѕРѕР±С‰Р°РµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РёРјСЏ РѕРґРЅРёРј РёР· РїРѕРґРґРµСЂР¶РёРІР°РµРјС‹С… СЂРµР¶РёРјРѕРІ.
 func IsKnownRoutingMode(name string) bool {
-	return name == RoutingModeFullProxy || name == RoutingModeManual
+	return name == RoutingModeGlobal || name == RoutingModeFullProxy || name == RoutingModeManual
 }
 
 // legacyProfileToMode вЂ” СЃРѕРѕС‚РІРµС‚СЃС‚РІРёРµ СЃС‚Р°СЂС‹С… РІСЃС‚СЂРѕРµРЅРЅС‹С… РїСЂРѕС„РёР»РµР№ РЅРѕРІС‹Рј СЂРµР¶РёРјР°Рј.
 // РџСЂРѕС„РёР»Рё, РєРѕС‚РѕСЂС‹С… Р·РґРµСЃСЊ РЅРµС‚, СЃС‡РёС‚Р°СЋС‚СЃСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРјРё Рё РЅРµ РїРµСЂРµРёРјРµРЅРѕРІС‹РІР°СЋС‚СЃСЏ.
 var legacyProfileToMode = map[string]string{
-	"default":         RoutingModeFullProxy,
-	"all-direct":      RoutingModeManual,
-	"selective-proxy": RoutingModeManual,
-	"gaming-friendly": RoutingModeManual,
-	"rf-smart-split":  RoutingModeManual,
-	"bypass-russia":   RoutingModeManual,
-	"bypass-rf":       RoutingModeManual,
+	"default":            RoutingModeFullProxy,
+	"all-direct":         RoutingModeManual,
+	"selective-proxy":    RoutingModeManual,
+	"gaming-friendly":    RoutingModeManual,
+	"rf-smart-split":     RoutingModeManual,
+	"bypass-russia":      RoutingModeManual,
+	"bypass-rf":          RoutingModeManual,
+	"general-dpi-bypass": RoutingModeManual,
 }
 
 // MigrateRoutingProfileNames РїРµСЂРµРІРѕРґРёС‚ СЃРѕС…СЂР°РЅС‘РЅРЅС‹Рµ РёРјРµРЅР° СЃС‚Р°СЂС‹С… РІСЃС‚СЂРѕРµРЅРЅС‹С… РїСЂРѕС„РёР»РµР№
@@ -88,30 +91,26 @@ func builtinRoutingPresets() []models.RoutingProfile {
 		Action:         models.RouteDirect,
 	}
 	ruServicesDirect := models.RouteRule{
-		Name:    "ru-services-direct",
-		Domains: RuDirectDomains(),
-		Action:  models.RouteDirect,
+		Name:           "ru-services-direct",
+		Domains:        RuDirectDomains(),
+		DomainSuffixes: RuDirectExtraSuffixes(),
+		Action:         models.RouteDirect,
 	}
 
-	// РћР±С‰Р°СЏ Р±Р°Р·Р° РѕР±РѕРёС… СЂРµР¶РёРјРѕРІ: Р»РѕРєР°Р»СЊРЅРѕРµ, РїСЂРёРІР°С‚РЅС‹Рµ СЃРµС‚Рё Рё Р Р¤ вЂ” РІСЃРµРіРґР° РЅР°РїСЂСЏРјСѓСЋ.
+	globalRules := append(append([]models.RouteRule{}, localDirect...), lanCIDR)
+
 	base := append(append([]models.RouteRule{}, localDirect...), lanCIDR, ruDirect, ruServicesDirect)
 
-	// РџРѕР»РЅС‹Р№ РїСЂРѕРєСЃРё: Р±Р°Р·Р° + РїСЂР°РІРёР»Р° РїРѕ РїСЂРѕС†РµСЃСЃР°Рј (РѕРЅРё РІР°Р¶РЅРµРµ РґРѕРјРµРЅРѕРІ),
-	// РґР°Р»СЊС€Рµ РІСЃС‘ РѕСЃС‚Р°Р»СЊРЅРѕРµ СѓС…РѕРґРёС‚ РІ С‚СѓРЅРЅРµР»СЊ С‡РµСЂРµР· final: proxy.
 	fullProxyRules := append([]models.RouteRule{}, base...)
-	fullProxyRules = append(fullProxyRules, ProcessProxyRules(nil)...)
 
-	// Р СѓС‡РЅС‹Рµ РїСЂР°РІРёР»Р°: С‚Р° Р¶Рµ Р±Р°Р·Р° + РїСЂР°РІРёР»Р° РїРѕ РїСЂРѕС†РµСЃСЃР°Рј + РјРµРґРёР°-СЃРїРёСЃРѕРє,
-	// РєРѕС‚РѕСЂС‹Р№ СЂР°РЅСЊС€Рµ Р¶РёР» РІ selective-proxy. РћСЃС‚Р°Р»СЊРЅРѕРµ вЂ” РЅР°РїСЂСЏРјСѓСЋ.
 	manualRules := append([]models.RouteRule{}, base...)
-	manualRules = append(manualRules, ProcessProxyRules(nil)...)
-	manualRules = append(manualRules, models.RouteRule{
-		Name:           "media-social-via-proxy",
-		DomainSuffixes: SelectiveMediaDomainSuffixes(),
-		Action:         models.RouteProxy,
-	})
 
 	return []models.RoutingProfile{
+		{
+			Name:  RoutingModeGlobal,
+			Final: "proxy",
+			Rules: globalRules,
+		},
 		{
 			Name:  RoutingModeFullProxy,
 			Final: "proxy",

@@ -73,9 +73,11 @@ func (a *Adapter) Stop(afterSignal func()) error {
 	a.cmd = nil
 	a.mu.Unlock()
 
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	errInt := cmd.Process.Signal(os.Interrupt)
+	var errTerm error
+	if errInt != nil {
 		// Fallback для процессов без поддержки SIGINT (Windows / no-console).
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		errTerm = cmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	if afterSignal != nil {
@@ -89,6 +91,16 @@ func (a *Adapter) Stop(afterSignal func()) error {
 		_ = cmd.Wait()
 		close(waitDone)
 	}()
+
+	if errInt != nil && errTerm != nil {
+		// На Windows отправка POSIX-сигналов процессу без консоли не поддерживается — завершаем сразу без 3s ожидания.
+		_ = cmd.Process.Kill()
+		select {
+		case <-waitDone:
+		case <-time.After(2 * time.Second):
+		}
+		return nil
+	}
 
 	select {
 	case <-waitDone:

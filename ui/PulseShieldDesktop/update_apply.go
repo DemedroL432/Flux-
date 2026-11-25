@@ -16,11 +16,16 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"pulseshield/app/bootlog"
 )
 
 const portableExeName = "Flux.exe"
 
-const updateProgressEvent = "update-progress"
+const (
+	updateProgressEvent  = "update-progress"
+	updateAvailableEvent = "update-available"
+	updateErrorEvent     = "update-error"
+)
 
 func allowedGitHubDownloadURL(raw string) error {
 	u, err := url.Parse(raw)
@@ -133,6 +138,49 @@ func isNSISInstallerURL(raw string) bool {
 	return strings.Contains(base, "setup") || strings.Contains(base, "installer")
 }
 
+func isInstalledProgramFilesPath(exePath string) bool {
+	p := strings.ToLower(filepath.Clean(strings.TrimSpace(exePath)))
+	if p == "" || p == "." {
+		return false
+	}
+	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
+		if base := strings.ToLower(filepath.Clean(strings.TrimSpace(os.Getenv(env)))); base != "" && base != "." {
+			if p == base || strings.HasPrefix(p, base+string(os.PathSeparator)) {
+				return true
+			}
+		}
+	}
+	return strings.Contains(p, `\program files\`) || strings.Contains(p, `\program files (x86)\`) ||
+		strings.Contains(p, `/program files/`) || strings.Contains(p, `/program files (x86)/`)
+}
+
+func pickAutoUpdateURL(info UpdateInfo, exePath string) string {
+	zipURL := strings.TrimSpace(info.DownloadURL)
+	instURL := strings.TrimSpace(info.InstallerDownloadURL)
+	if isInstalledProgramFilesPath(exePath) {
+		if instURL != "" {
+			return instURL
+		}
+		return zipURL
+	}
+	if zipURL != "" {
+		return zipURL
+	}
+	return instURL
+}
+
+func cleanupOldExtractDirs(base string) {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "extract-") {
+			_ = os.RemoveAll(filepath.Join(base, e.Name()))
+		}
+	}
+}
+
 // downloadToFileProgress скачивает файл; onProgress вызывается не чаще ~200 ms (pct -1 если размер неизвестен).
 func downloadToFileProgress(ctx context.Context, rawURL, dest string, onProgress func(pct int)) error {
 	if err := allowedGitHubDownloadURL(rawURL); err != nil {
@@ -233,7 +281,7 @@ const psApplyUpdate = `param(
 )
 $ErrorActionPreference = 'SilentlyContinue'
 Start-Sleep -Seconds 3
-Stop-Process -Name "Flux","PulseShield","PulseShieldDesktop" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "Flux","PulseShield","PulseShieldDesktop","sing-box","winws2" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 & robocopy $Source $Target /E /R:5 /W:1 /NFL /NDL /NJH /NJS
 $launch = Join-Path $Target $ExeName
@@ -255,7 +303,7 @@ const psApplyInstaller = `param(
 )
 $ErrorActionPreference = 'SilentlyContinue'
 Start-Sleep -Seconds 2
-Stop-Process -Name "Flux","PulseShield","PulseShieldDesktop" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "Flux","PulseShield","PulseShieldDesktop","sing-box","winws2" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait
 $candidates = @(
@@ -288,6 +336,7 @@ func (a *App) applyZipUpdate(ctx context.Context, raw string) error {
 	}
 
 	a.emitUpdateProgress("unpack", -1)
+	cleanupOldExtractDirs(base)
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		return err
 	}
@@ -414,6 +463,11 @@ func (a *App) quitForUpdate() {
 // ApplyAutoUpdate: для .zip — portable (robocopy + перезапуск PulseShield.exe);
 // для NSIS .exe (имя содержит setup/installer) — тихая установка /S, затем выход приложения.
 func (a *App) ApplyAutoUpdate(downloadURL string) error {
+	if !a.autoUpdateBusy.CompareAndSwap(false, true) {
+		return fmt.Errorf("обновление уже выполняется")
+	}
+	defer a.autoUpdateBusy.Store(false)
+
 	raw := strings.TrimSpace(downloadURL)
 	if raw == "" {
 		return fmt.Errorf("пустая ссылка на загрузку")
@@ -433,5 +487,80 @@ func (a *App) ApplyAutoUpdate(downloadURL string) error {
 		return a.applyInstallerUpdate(ctx, raw)
 	default:
 		return fmt.Errorf("неподдерживаемый тип: используйте .zip portable или NSIS Setup.exe с релиза")
+	}
+}
+
+// ApplyLatestUpdate проверяет последний релиз на GitHub, выбирает подходящий пакет (portable .zip или NSIS Setup.exe) и запускает установку.
+func (a *App) ApplyLatestUpdate() error {
+	info := a.GetUpdateInfo()
+	if !info.OK {
+		return fmt.Errorf("%s", info.Message)
+	}
+	if info.UpToDate {
+		return fmt.Errorf("установлена актуальная версия (%s)", info.CurrentVersion)
+	}
+	exePath, _ := os.Executable()
+	if eval, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = eval
+	}
+	dlURL := pickAutoUpdateURL(info, exePath)
+	if dlURL == "" {
+		return fmt.Errorf("в релизе %s не найден файл обновления", info.LatestTag)
+	}
+	return a.ApplyAutoUpdate(dlURL)
+}
+
+func (a *App) runAutoUpdateLoop() {
+	time.Sleep(10 * time.Second)
+	var lastAttemptedTag string
+
+	checkAndApplyOnce := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				bootlog.Append(fmt.Sprintf("auto-update panic: %v", r))
+			}
+		}()
+		if a == nil || a.st == nil {
+			return
+		}
+		if a.st.Snapshot().AutoUpdateDisabled || a.autoUpdateBusy.Load() {
+			return
+		}
+		ver := strings.TrimSpace(a.GetAppVersion())
+		if ver == "" || strings.EqualFold(ver, "dev") {
+			return
+		}
+		info := a.GetUpdateInfo()
+		if !info.OK || info.UpToDate || info.IsPrerelease || info.LatestTag == "" || info.LatestTag == lastAttemptedTag {
+			return
+		}
+		exePath, _ := os.Executable()
+		if eval, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = eval
+		}
+		dlURL := pickAutoUpdateURL(info, exePath)
+		if dlURL == "" {
+			return
+		}
+		lastAttemptedTag = info.LatestTag
+		if a.ctx != nil {
+			if b, err := json.Marshal(info); err == nil {
+				runtime.EventsEmit(a.ctx, updateAvailableEvent, string(b))
+			}
+		}
+		bootlog.Append(fmt.Sprintf("auto-update: starting %s -> %s (%s)", info.CurrentVersion, info.LatestTag, dlURL))
+		if err := a.ApplyAutoUpdate(dlURL); err != nil {
+			bootlog.Append(fmt.Sprintf("auto-update failed (%s): %v", info.LatestTag, err))
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, updateErrorEvent, err.Error())
+			}
+		}
+	}
+
+	checkAndApplyOnce()
+	ticker := time.NewTicker(4 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		checkAndApplyOnce()
 	}
 }

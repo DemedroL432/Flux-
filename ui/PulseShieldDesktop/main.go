@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at link time: -ldflags "-X main.Version=1.2.3" (release). Default matches desktop line 0.7.x.
-var Version = "0.7.6"
+var Version = "0.7.7"
 
 //go:embed all:frontend/dist
 var assets embed.FS

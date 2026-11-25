@@ -3,7 +3,7 @@ package config
 import "pulseshield/app/models"
 
 // CurrentRoutingBuiltinRev увеличивайте при изменении builtinRoutingPresets, чтобы подтянуть профили у существующих установок.
-const CurrentRoutingBuiltinRev = 8
+const CurrentRoutingBuiltinRev = 11
 
 // XboxDnsFriendlyDomainSuffixes — сервисы, для которых на https://xbox-dns.ru/ заявлен Smart DNS без VPN
 // (Xbox Live, игры в т.ч. Supercell/Bungie, ChatGPT/Claude/Gemini/Copilot, JetBrains/GitHub/Notion/Framer, Twitch/Spotify/xCloud).
@@ -71,30 +71,75 @@ func RuDirectDomainSuffixes() []string {
 	}
 }
 
-// RuDirectDomains — отдельные российские сервисы и госдомены, которые не должны уходить в VLESS.
+// RuDirectDomains — отдельные российские сервисы и госдомены без невалидных wildcard-масок.
 func RuDirectDomains() []string {
 	return []string{
-		"gov.ru", "*.gov.ru",
-		"kremlin.ru", "*.kremlin.ru",
-		"nalog.ru", "*.nalog.ru",
-		"gosuslugi.ru", "*.gosuslugi.ru",
-		"yandex.ru", "*.yandex.ru",
-		"yandex.net", "*.yandex.net",
-		"ya.ru", "*.ya.ru",
-		"vk.com", "*.vk.com",
-		"vk.ru", "*.vk.ru",
-		"vk-cdn.net", "*.vk-cdn.net",
-		"mail.ru", "*.mail.ru",
-		"ok.ru", "*.ok.ru",
-		"dzen.ru", "*.dzen.ru",
-		"rutube.ru", "*.rutube.ru",
-		"kinopoisk.ru", "*.kinopoisk.ru",
-		"avito.ru", "*.avito.ru",
-		"sberbank.ru", "*.sberbank.ru",
-		"sber.ru", "*.sber.ru",
-		"tbank.ru", "*.tbank.ru",
-		"ozon.ru", "*.ozon.ru",
-		"wildberries.ru", "*.wildberries.ru",
+		"gov.ru",
+		"kremlin.ru",
+		"nalog.ru",
+		"gosuslugi.ru",
+		"yandex.ru",
+		"yandex.net",
+		"ya.ru",
+		"vk.com",
+		"vk.ru",
+		"vk-cdn.net",
+		"mail.ru",
+		"ok.ru",
+		"dzen.ru",
+		"rutube.ru",
+		"kinopoisk.ru",
+		"avito.ru",
+		"sberbank.ru",
+		"sber.ru",
+		"tbank.ru",
+		"ozon.ru",
+		"wildberries.ru",
+	}
+}
+
+// RuDirectExtraSuffixes — суффиксы российских сервисов вне зоны .ru для domain_suffix в sing-box.
+func RuDirectExtraSuffixes() []string {
+	return []string{
+		"vk.com",
+		"vk-cdn.net",
+		"yandex.net",
+	}
+}
+
+// AIServiceDomainSuffixes — полный список доменов популярных нейросетей (ChatGPT, Claude, Gemini, Grok и др.),
+// которым необходим зарубежный IP-адрес через прокси.
+func AIServiceDomainSuffixes() []string {
+	return []string{
+		"openai.com",
+		"chatgpt.com",
+		"oaistatic.com",
+		"oaiusercontent.com",
+		"sora.com",
+		"anthropic.com",
+		"claude.ai",
+		"claudeusercontent.com",
+		"gemini.google.com",
+		"aistudio.google.com",
+		"makersuite.google.com",
+		"ai.google.dev",
+		"generativelanguage.googleapis.com",
+		"notebooklm.google.com",
+		"deepmind.google",
+		"labs.google",
+		"alkalimakersuite-pa.clients6.google.com",
+		"grok.com",
+		"x.ai",
+		"copilot.microsoft.com",
+		"perplexity.ai",
+		"mistral.ai",
+		"replicate.com",
+		"huggingface.co",
+		"openrouter.ai",
+		"poe.com",
+		"midjourney.com",
+		"cursor.sh",
+		"cursor.com",
 	}
 }
 
@@ -111,14 +156,6 @@ func ProxyOnlyMediaDomainSuffixes() []string {
 		"whatsapp.net",
 		"signal.org",
 		"messenger.com",
-		// Steam Web / API / Fastly & Cloudflare CDN (блокируются ТСПУ на провайдерах вроде «Подряд»)
-		"steampowered.com",
-		"steamcommunity.com",
-		"steamstatic.com",
-		"steamusercontent.com",
-		"steamserver.net",
-		"steamconnecttest.com",
-		"steamgames.com",
 	}
 }
 
@@ -255,15 +292,11 @@ func ApplyRoutingBuiltinUpgrade(cfg *models.AppConfig) bool {
 	if cfg == nil || cfg.RoutingBuiltinRev >= CurrentRoutingBuiltinRev {
 		return false
 	}
-	if cfg.ProcessProxyMap == nil {
-		cfg.ProcessProxyMap = map[string]bool{}
-	}
-	// Автоматически включаем проксирование клиента Steam при апгрейде до rev 8 (обход блокировок CDN/API на ТСПУ «Подряд»)
-	if _, exists := cfg.ProcessProxyMap["steam.exe"]; !exists {
-		cfg.ProcessProxyMap["steam.exe"] = true
-	}
-	if _, exists := cfg.ProcessProxyMap["steamwebhelper.exe"]; !exists {
-		cfg.ProcessProxyMap["steamwebhelper.exe"] = true
+	if cfg.ProcessProxyMap != nil {
+		// Убираем навязанное автопроксирование Steam из прошлых ревизий (rev 8): Steam/Discord/YouTube обрабатываются через DPI.
+		delete(cfg.ProcessProxyMap, "steam.exe")
+		delete(cfg.ProcessProxyMap, "Steam.exe")
+		delete(cfg.ProcessProxyMap, "steamwebhelper.exe")
 	}
 	byName := map[string]models.RoutingProfile{}
 	for _, p := range builtinRoutingPresets() {

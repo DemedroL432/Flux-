@@ -10,8 +10,8 @@ import {
 import {
   ActivateLicense,
   AddUserRoutingRule,
-  ApplyAutoUpdate,
   ApplyDnsNow,
+  ApplyLatestUpdate,
   ApplyRuntime,
   CheckForUpdates,
   ClearLogFiles,
@@ -43,10 +43,12 @@ import {
   RunSelfCheckText,
   SetActiveDPIProfile,
   SetActiveServer,
+  SetAutoUpdateEnabled,
   SetDPIEnabled,
   SetDnsSettings,
   SetDpiListContent,
   SetProxyEnabled,
+  SetProxyMode,
   SetProxyPort,
   SetRoutingProfile,
   SetSubscriptionURL,
@@ -90,7 +92,9 @@ type Ctx = {
   proxyPhase: "idle" | "connecting" | "connected";
   proxyEnabled: boolean;
   dpiEnabled: boolean;
+  proxyMode: string;
   setProxy: (on: boolean) => Promise<void>;
+  setProxyMode: (mode: string) => Promise<void>;
   setDpi: (on: boolean) => Promise<void>;
   stopAll: () => Promise<void>;
 
@@ -135,8 +139,11 @@ type Ctx = {
   applyProxyPort: (p: number) => Promise<void>;
   applyDns: (preset: string, p: string, s: string) => Promise<void>;
   activateLicense: (code: string) => Promise<void>;
+  autoUpdateEnabled: boolean;
+  setAutoUpdateEnabled: (on: boolean) => Promise<void>;
   checkUpdates: () => Promise<void>;
   updateInfo: Any | null;
+  updateProgress: { phase: string; pct: number } | null;
   installUpdate: () => Promise<void>;
   guide: string;
   clearLogs: () => Promise<void>;
@@ -192,6 +199,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [dpiTune, setDpiTune] = useState<Any | null>(null);
   const [selfCheck, setSelfCheck] = useState("");
   const [updateInfo, setUpdateInfo] = useState<Any | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [guide, setGuide] = useState("");
   const [listsPath, setListsPath] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -295,17 +303,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Подписка на события бэкенда.
   useEffect(() => {
-    try {
-      const off = EventsOn("state-changed", () => {
-        void refresh();
-      });
-      return () => {
-        if (typeof off === "function") off();
-      };
-    } catch {
-      return;
-    }
-  }, [refresh]);
+    const offs: Array<() => void> = [];
+    const reg = (event: string, cb: (...data: unknown[]) => void) => {
+      try {
+        const off = EventsOn(event, cb);
+        if (typeof off === "function") offs.push(off);
+      } catch {
+        /* игнорируем при отсутствии runtime */
+      }
+    };
+
+    reg("state-changed", () => {
+      void refresh();
+    });
+    reg("update-available", (raw: unknown) => {
+      try {
+        const info = typeof raw === "string" ? (JSON.parse(raw) as Any) : ((raw || {}) as Any);
+        setUpdateInfo(info);
+        const verLabel = String(info?.latestTag || info?.latestVersion || "");
+        if (verLabel) {
+          notify(`Найдено обновление ${verLabel} — скачивание…`);
+        }
+      } catch {
+        /* некорректный payload игнорируем */
+      }
+    });
+    reg("update-progress", (raw: unknown) => {
+      try {
+        const p = typeof raw === "string" ? (JSON.parse(raw) as Any) : ((raw || {}) as Any);
+        setUpdateProgress({
+          phase: String(p?.phase || "download"),
+          pct: Number(p?.pct ?? -1),
+        });
+      } catch {
+        /* некорректный payload игнорируем */
+      }
+    });
+    reg("update-error", (raw: unknown) => {
+      setUpdateProgress(null);
+      notify(`Ошибка обновления: ${String(raw || "неизвестная ошибка")}`, "error");
+    });
+
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [notify, refresh]);
 
   const proxyEnabled = !!uiState?.proxyEnabled;
   const dpiEnabled = !!uiState?.dpiEnabled;
@@ -361,7 +403,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setRouting = useCallback(
     async (name: string) => {
-      await withBusy(() => SetRoutingProfile(name));
+      await withBusy(async () => {
+        await SetRoutingProfile(name);
+        await ApplyRuntime();
+      });
+    },
+    [withBusy]
+  );
+
+  const setProxyMode = useCallback(
+    async (mode: string) => {
+      await withBusy(async () => {
+        await SetProxyMode(mode);
+        await ApplyRuntime();
+      });
     },
     [withBusy]
   );
@@ -399,7 +454,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const selectServer = useCallback(
     async (id: string) => {
-      await withBusy(() => SetActiveServer(id));
+      await withBusy(async () => {
+        await SetActiveServer(id);
+        await ApplyRuntime();
+      });
     },
     [withBusy]
   );
@@ -562,6 +620,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [notify, withBusy]
   );
 
+  const autoUpdateEnabled = uiState?.autoUpdateEnabled !== false;
+
+  const setAutoUpdateEnabled = useCallback(
+    async (on: boolean) => {
+      await withBusy(async () => {
+        await SetAutoUpdateEnabled(on);
+      });
+      notify(on ? "Автообновление включено" : "Автообновление отключено");
+    },
+    [notify, withBusy]
+  );
+
   const checkUpdates = useCallback(async () => {
     setBusy(true);
     try {
@@ -575,13 +645,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [notify]);
 
   const installUpdate = useCallback(async () => {
-    const url = String((updateInfo as Any)?.installerDownloadUrl || "");
-    if (!url) {
-      notify("Ссылка на установщик не получена", "error");
-      return;
+    setBusy(true);
+    try {
+      await ApplyLatestUpdate();
+    } catch (e: unknown) {
+      setUpdateProgress(null);
+      notify(String(e instanceof Error ? e.message : e), "error");
+    } finally {
+      setBusy(false);
     }
-    await withBusy(() => ApplyAutoUpdate(url));
-  }, [notify, updateInfo, withBusy]);
+  }, [notify]);
 
   const clearLogs = useCallback(async () => {
     await withBusy(() => ClearLogFiles());
@@ -632,7 +705,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     proxyPhase,
     proxyEnabled,
     dpiEnabled,
+    proxyMode: String(uiState?.proxyMode || "system_proxy"),
     setProxy,
+    setProxyMode,
     setDpi,
     stopAll,
     servers,
@@ -669,8 +744,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     applyProxyPort,
     applyDns,
     activateLicense,
+    autoUpdateEnabled,
+    setAutoUpdateEnabled,
     checkUpdates,
     updateInfo,
+    updateProgress,
     installUpdate,
     guide,
     clearLogs,

@@ -6,12 +6,14 @@ import { formatClock } from "./format";
 
 export function routingLabel(name?: string): string {
   switch (name) {
-    case "full-proxy":
-      return "Полный прокси";
     case "manual":
-      return "Ручные правила";
+      return "Выборочно";
+    case "full-proxy":
+      return "Всё, кроме РФ";
+    case "global":
+      return "Всё (100% GEO)";
     default:
-      return name || "Ручные правила";
+      return name || "Выборочно";
   }
 }
 
@@ -99,7 +101,7 @@ export function Sidebar() {
           </span>
           <span className="fx-brand-name">Flux</span>
         </div>
-        <span className="fx-ver">v{appVersion || "0.7.6"}</span>
+        <span className="fx-ver">v{appVersion || "0.7.7"}</span>
       </div>
 
       <div className="fx-engines">
@@ -189,6 +191,7 @@ export function TopBar() {
     splitRows,
     uiState,
     appVersion,
+    updateProgress,
     closeToTray,
   } = useApp();
 
@@ -203,7 +206,7 @@ export function TopBar() {
   } else if (active === "dpi") {
     subtitle = String(uiState?.activeDpiProfile || "Профили и списки");
   } else if (active === "net") {
-    subtitle = `Flux v${appVersion || "0.7.6"}`;
+    subtitle = `Flux v${appVersion || "0.7.7"}`;
   }
 
   const isLive = Boolean(rt?.connected || proxyEnabled || dpiEnabled);
@@ -223,6 +226,24 @@ export function TopBar() {
         className="fx-top-right"
         style={{ ["--wails-draggable" as string]: "no-drag" }}
       >
+        {updateProgress && (
+          <div className="fx-session-pill live" title="Автоматическое обновление Flux">
+            <span
+              className="fx-dot on"
+              style={{ marginTop: 0, width: 6, height: 6 }}
+            />
+            <span>
+              {updateProgress.phase === "unpack"
+                ? "Распаковка…"
+                : updateProgress.phase === "install"
+                  ? "Установка…"
+                  : updateProgress.pct >= 0
+                    ? `Обновление ${updateProgress.pct}%`
+                    : "Скачивание…"}
+            </span>
+          </div>
+        )}
+
         <div className={`fx-session-pill ${isLive ? "live" : ""}`}>
           <span
             className={`fx-dot ${isLive ? "on" : ""}`}

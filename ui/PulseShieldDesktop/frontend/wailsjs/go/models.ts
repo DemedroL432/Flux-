@@ -461,6 +461,7 @@ export namespace main {
 	    dpiProfiles: models.DPIProfile[];
 	    routingProfiles: models.RoutingProfile[];
 	    strictRoutingMode: boolean;
+	    autoUpdateEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UIState(source);
@@ -497,6 +498,7 @@ export namespace main {
 	        this.dpiProfiles = this.convertValues(source["dpiProfiles"], models.DPIProfile);
 	        this.routingProfiles = this.convertValues(source["routingProfiles"], models.RoutingProfile);
 	        this.strictRoutingMode = source["strictRoutingMode"];
+	        this.autoUpdateEnabled = source["autoUpdateEnabled"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

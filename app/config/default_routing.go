@@ -6,22 +6,43 @@ import (
 	"pulseshield/app/models"
 )
 
-// MergeSingBoxRoutingRules: процессы → пользователь → активный профиль → [опционально] библиотека умного сплита.
-// При StrictRoutingMode библиотека не добавляется (режим «чистый гейминг»).
-func MergeSingBoxRoutingRules(cfg models.AppConfig, zapretListsDir string) []models.RouteRule {
-	var merged []models.RouteRule
-	merged = append(merged, ProcessProxyRules(&cfg)...)
-	merged = append(merged, cfg.UserRoutingRules...)
-	if rp, ok := cfg.ActiveRoutingProfile(); ok {
-		merged = append(merged, rp.Rules...)
+// EffectiveProfileRules возвращает правила активного профиля с учётом состояния DPI:
+// правило dpi-bypass-media (YouTube, Discord и др.) при включённом DPI идёт в обход прокси (winws2),
+// а при выключенном DPI направляется через прокси, чтобы сервисы оставались доступны.
+func EffectiveProfileRules(cfg models.AppConfig) []models.RouteRule {
+	rp, ok := cfg.ActiveRoutingProfile()
+	if !ok {
+		return nil
 	}
-	if !cfg.StrictRoutingMode {
+	out := make([]models.RouteRule, 0, len(rp.Rules))
+	for _, r := range rp.Rules {
+		if r.Name == "dpi-bypass-media" && r.Action == models.RouteDPIBypass && !cfg.DPIEnabled {
+			r.Action = models.RouteProxy
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// MergeSingBoxRoutingRules: для встроенных режимов (manual, full-proxy, global) применяются строго
+// пользовательские правила (UserRoutingRules) и правила активного профиля — без навязанных процессов и библиотек.
+func MergeSingBoxRoutingRules(cfg models.AppConfig, zapretListsDir string) []models.RouteRule {
+	resolved := models.ResolveRoutingProfileAlias(cfg.RoutingProfile)
+	isBuiltinMode := resolved == models.RoutingModeManual || resolved == models.RoutingModeFullProxy || resolved == models.RoutingModeGlobal
+
+	var merged []models.RouteRule
+	merged = append(merged, cfg.UserRoutingRules...)
+	if !isBuiltinMode {
+		merged = append(merged, ProcessProxyRules(&cfg)...)
+	}
+	merged = append(merged, EffectiveProfileRules(cfg)...)
+	if !cfg.StrictRoutingMode && !isBuiltinMode {
 		merged = append(merged, DefaultRoutingLibraryRules(zapretListsDir)...)
 	}
 	return merged
 }
 
-// DefaultRoutingLibraryRules — домены/IP «умного сплита» (последний приоритет среди явных правил).
+// DefaultRoutingLibraryRules — домены/IP «умного сплита» (используется только для внешних пользовательских профилей без StrictRoutingMode).
 func DefaultRoutingLibraryRules(zapretListsDir string) []models.RouteRule {
 	var rules []models.RouteRule
 
@@ -34,16 +55,9 @@ func DefaultRoutingLibraryRules(zapretListsDir string) []models.RouteRule {
 	if zapretListsDir != "" {
 		if cidrs, err := ReadZapretListCIDRs(filepath.Join(zapretListsDir, "ipset-cloudflare.txt")); err == nil && len(cidrs) > 0 {
 			rules = append(rules, models.RouteRule{
-				Name:    "builtin-proxy-cloudflare-ipset-file",
-				CIDRs:   cidrs,
-				Action:  models.RouteProxy,
-			})
-		}
-		if cidrs, err := ReadZapretListCIDRs(filepath.Join(zapretListsDir, "ipset-steam.txt")); err == nil && len(cidrs) > 0 {
-			rules = append(rules, models.RouteRule{
-				Name:    "builtin-proxy-steam-ipset",
-				CIDRs:   cidrs,
-				Action:  models.RouteProxy,
+				Name:   "builtin-proxy-cloudflare-ipset-file",
+				CIDRs:  cidrs,
+				Action: models.RouteProxy,
 			})
 		}
 		for _, pair := range []struct {
@@ -80,20 +94,15 @@ func DefaultRoutingLibraryRules(zapretListsDir string) []models.RouteRule {
 }
 
 func builtinProxyDomainSuffixes() []string {
-	// Только домены, которых НЕТ в XboxDnsFriendlyDomainSuffixes().
-	// Домены из Xbox-списка (openai.com, anthropic.com, claude.ai, cursor.*, jetbrains.com,
-	// gemini.google.com и др.) убраны: при профиле rf-smart-split они идут через XboxDnsDirectRule
-	// (dpi-bypass/direct), которое стоит первым и выигрывает в first-match.
-	return []string{
-		"netflix.com",
-		"nflxvideo.net",
-		"nflxso.net",
-		"cdninstagram.com", // только CDN; instagram.com — в Xbox-списке
-		"perplexity.ai",
-		"mistral.ai",
-		"replicate.com",
-		"huggingface.co",
-	}
+	return mergeUniqueStringSlices(
+		AIServiceDomainSuffixes(),
+		[]string{
+			"netflix.com",
+			"nflxvideo.net",
+			"nflxso.net",
+			"cdninstagram.com",
+		},
+	)
 }
 
 func builtinAnticheatDomainSuffixes() []string {

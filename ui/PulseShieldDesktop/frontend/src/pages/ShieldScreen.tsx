@@ -35,8 +35,10 @@ export function ShieldScreen() {
     rt,
     proxyEnabled,
     dpiEnabled,
+    proxyMode,
     proxyPhase,
     setProxy,
+    setProxyMode,
     setDpi,
     stopAll,
     activeServer,
@@ -263,6 +265,33 @@ export function ShieldScreen() {
             )}
 
             <div className="fx-kv">
+              <div className="fx-kv-row">
+                <span className="fx-kv-k">Режим захвата</span>
+                <div className="fx-seg" role="group" aria-label="Режим захвата трафика">
+                  <button
+                    type="button"
+                    className={`fx-seg-btn ${proxyMode !== "tun" ? "active" : ""}`}
+                    disabled={busy}
+                    onClick={() => void setProxyMode("system_proxy")}
+                    title="HTTP/SOCKS5 системный прокси Windows (без прав администратора)"
+                  >
+                    Системный прокси
+                  </button>
+                  <button
+                    type="button"
+                    className={`fx-seg-btn ${proxyMode === "tun" ? "active" : ""}`}
+                    disabled={busy}
+                    onClick={() => void setProxyMode("tun")}
+                    title={
+                      uiState?.elevated
+                        ? "Виртуальный VPN-адаптер: перехватывает все программы, UDP/WebRTC и IPv6"
+                        : "Требуется запуск Flux от имени администратора"
+                    }
+                  >
+                    TUN (VPN)
+                  </button>
+                </div>
+              </div>
               <div className="fx-kv-row">
                 <span className="fx-kv-k">Локальный прокси</span>
                 <span className="fx-kv-v fx-mono">

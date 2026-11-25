@@ -34,6 +34,10 @@ export function ApplyDpiAutotunePreset() {
   return window['go']['main']['App']['ApplyDpiAutotunePreset']();
 }
 
+export function ApplyLatestUpdate() {
+  return window['go']['main']['App']['ApplyLatestUpdate']();
+}
+
 export function ApplyRoutingJSON(arg1) {
   return window['go']['main']['App']['ApplyRoutingJSON'](arg1);
 }
@@ -212,6 +216,10 @@ export function SetActiveDPIProfile(arg1) {
 
 export function SetActiveServer(arg1) {
   return window['go']['main']['App']['SetActiveServer'](arg1);
+}
+
+export function SetAutoUpdateEnabled(arg1) {
+  return window['go']['main']['App']['SetAutoUpdateEnabled'](arg1);
 }
 
 export function SetDPIEnabled(arg1) {

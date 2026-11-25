@@ -49,8 +49,11 @@ func TestResolveRoutingProfileAlias(t *testing.T) {
 		{"selective-proxy", "manual"},
 		{"default", "full-proxy"},
 		{"full-proxy", "full-proxy"},
+		{"global", "global"},
+		{"global-proxy", "global"},
 		{"manual", "manual"},
 		{"gaming-friendly", "manual"},
+		{"general-dpi-bypass", "manual"},
 		{"unknown", "unknown"},
 		{"custom-profile", "custom-profile"},
 	}

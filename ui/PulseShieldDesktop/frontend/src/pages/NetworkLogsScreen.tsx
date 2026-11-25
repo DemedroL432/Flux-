@@ -4,6 +4,7 @@ import { formatDate } from "../format";
 import { ACCENTS, THEMES } from "../themes";
 import { LogSource, LogViewMode } from "../types";
 import { logPanelContent, logPanelPlaceholder } from "../utils";
+import { Switch } from "../ui";
 
 type Any = Record<string, unknown>;
 type NetSubTab = "logs" | "network" | "diag";
@@ -82,13 +83,18 @@ export function NetworkLogsScreen() {
     proxyPortDraft,
     applyProxyPort,
     applyDns,
+    proxyMode,
+    setProxyMode,
     theme,
     setTheme,
     accent,
     setAccent,
     activateLicense,
+    autoUpdateEnabled,
+    setAutoUpdateEnabled,
     checkUpdates,
     updateInfo,
+    updateProgress,
     installUpdate,
     selfCheck,
     runSelfCheck,
@@ -194,7 +200,7 @@ export function NetworkLogsScreen() {
         </div>
 
         <span className="fx-mono" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-          Flux v{appVersion || "0.7.6"}
+          Flux v{appVersion || "0.7.7"}
         </span>
       </div>
 
@@ -296,9 +302,45 @@ export function NetworkLogsScreen() {
       {/* Tab 2: Network Settings & App Preferences */}
       {tab === "network" && (
         <div className="fx-split-2">
-          {/* Left Column: Port & DNS */}
+          {/* Left Column: Capture mode, Port & DNS */}
           <div className="fx-col">
             <section className="fx-section fx-section-first">
+              <div className="fx-sec-head">
+                <div>
+                  <div className="fx-sec-title">РЕЖИМ ЗАХВАТА ТРАФИКА</div>
+                  <div className="fx-sec-desc">
+                    TUN (VPN) перехватывает весь трафик ПК, защищая от утечек WebRTC (UDP) и IPv6.
+                    {!uiState?.elevated && " Для TUN требуется запуск от имени администратора."}
+                  </div>
+                </div>
+              </div>
+
+              <div className="fx-seg" role="group" aria-label="Режим захвата трафика">
+                <button
+                  type="button"
+                  className={`fx-seg-btn ${proxyMode !== "tun" ? "active" : ""}`}
+                  disabled={busy}
+                  onClick={() => void setProxyMode("system_proxy")}
+                >
+                  Системный прокси
+                </button>
+                <button
+                  type="button"
+                  className={`fx-seg-btn ${proxyMode === "tun" ? "active" : ""}`}
+                  disabled={busy}
+                  onClick={() => void setProxyMode("tun")}
+                  title={
+                    uiState?.elevated
+                      ? "Включить виртуальный VPN-адаптер (WinTun)"
+                      : "Требуется запуск Flux от имени администратора"
+                  }
+                >
+                  TUN (VPN)
+                </button>
+              </div>
+            </section>
+
+            <section className="fx-section">
               <div className="fx-sec-head">
                 <div>
                   <div className="fx-sec-title">ЛОКАЛЬНЫЙ ПРОКСИ-ПОРТ</div>
@@ -542,7 +584,7 @@ export function NetworkLogsScreen() {
                 <div className="fx-sec-title">ОБНОВЛЕНИЯ ПРИЛОЖЕНИЯ</div>
                 <div className="fx-sec-desc">
                   Установлена версия{" "}
-                  <span className="fx-mono">v{appVersion || "0.7.6"}</span>
+                  <span className="fx-mono">v{appVersion || "0.7.7"}</span>
                 </div>
               </div>
 
@@ -567,6 +609,42 @@ export function NetworkLogsScreen() {
                 )}
               </div>
             </div>
+
+            <div className="fx-well fx-well-pad" style={{ marginBottom: 10 }}>
+              <div className="fx-bar" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>Автоматическое обновление</div>
+                  <div className="fx-sec-desc" style={{ marginTop: 2 }}>
+                    Проверять GitHub Releases при запуске и каждые 4 часа, автоматически скачивать и устанавливать новые версии.
+                  </div>
+                </div>
+                <Switch
+                  checked={autoUpdateEnabled}
+                  disabled={busy}
+                  label="Автоматическое обновление"
+                  onChange={(next) => void setAutoUpdateEnabled(next)}
+                />
+              </div>
+            </div>
+
+            {updateProgress && (
+              <div className="fx-well fx-well-pad" style={{ marginBottom: 10 }}>
+                <div className="fx-bar" style={{ justifyContent: "space-between" }}>
+                  <span>
+                    {updateProgress.phase === "unpack"
+                      ? "Распаковка архива обновления…"
+                      : updateProgress.phase === "install"
+                        ? "Установка обновления и перезапуск…"
+                        : updateProgress.pct >= 0
+                          ? `Скачивание обновления: ${updateProgress.pct}%`
+                          : "Скачивание обновления…"}
+                  </span>
+                  <span className="fx-tag accent">
+                    {updateProgress.pct >= 0 ? `${updateProgress.pct}%` : "Выполняется"}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {updateInfo && (
               <div className="fx-well fx-well-pad">

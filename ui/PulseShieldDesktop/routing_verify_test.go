@@ -6,6 +6,7 @@ import (
 
 	"pulseshield/app/config"
 	"pulseshield/app/models"
+	"pulseshield/app/state"
 )
 
 // normalizeRouteQuery принимает URL, host:port, IP и .exe — проверяем основные формы.
@@ -48,7 +49,7 @@ func TestNormalizeRouteQueryIPv6(t *testing.T) {
 }
 
 // first-match должен совпадать с порядком MergeSingBoxRoutingRules:
-// процессы → пользователь → профиль → библиотека.
+// пользователь → [процессы] → профиль → [библиотека].
 func TestVerifyRouteTargetPrecedence(t *testing.T) {
 	// Библиотека отправляет .netflix.com в proxy, но пользовательское правило выше — в direct.
 	cfg := models.AppConfig{
@@ -145,5 +146,76 @@ func TestVerifyPrivateNotFinal(t *testing.T) {
 		if !isPrivateRouteIP(addr) {
 			t.Fatalf("%s должен быть приватным и не попадать под final", addr)
 		}
+	}
+}
+
+func TestVerifyRouteTargetCleanModesAndUserPriority(t *testing.T) {
+	// 1. В режиме manual (Выборочно) без пользовательских правил Steam, YouTube, Discord и ChatGPT идут напрямую (обрабатываются DPI по своим спискам).
+	cfg := config.DefaultConfig()
+	cfg.RoutingProfile = config.RoutingModeManual
+	cfg.DPIEnabled = true
+	appManual := &App{st: state.New(cfg)}
+
+	for _, target := range []string{"www.youtube.com", "store.steampowered.com", "https://chatgpt.com/c/123", "discord.com"} {
+		dec, err := appManual.VerifyRouteTarget(target)
+		if err != nil {
+			t.Fatalf("VerifyRouteTarget(%q): %v", target, err)
+		}
+		if !dec.Final || dec.Target != string(models.RouteDirect) {
+			t.Fatalf("manual default for %q: expected final=direct, got %+v", target, dec)
+		}
+	}
+
+	// 2. Пользовательское правило сразу направляет нужный сервис или процесс туда, куда указал пользователь.
+	if err := config.AddUserRoutingRule(&cfg, "*.chatgpt.com", "proxy"); err != nil {
+		t.Fatalf("AddUserRoutingRule chatgpt: %v", err)
+	}
+	if err := config.AddUserRoutingRule(&cfg, "Discord.exe", "direct"); err != nil {
+		t.Fatalf("AddUserRoutingRule discord: %v", err)
+	}
+	appUser := &App{st: state.New(cfg)}
+
+	decChat, err := appUser.VerifyRouteTarget("https://chatgpt.com/c/123")
+	if err != nil {
+		t.Fatalf("VerifyRouteTarget user chatgpt: %v", err)
+	}
+	if decChat.Source != "user" || decChat.Target != string(models.RouteProxy) {
+		t.Fatalf("expected user proxy for chatgpt.com, got %+v", decChat)
+	}
+
+	decProc, err := appUser.VerifyRouteTarget("Discord.exe")
+	if err != nil {
+		t.Fatalf("VerifyRouteTarget Discord.exe: %v", err)
+	}
+	if decProc.Source != "user" || decProc.Target != string(models.RouteDirect) {
+		t.Fatalf("expected user direct for Discord.exe, got %+v", decProc)
+	}
+
+	// 3. В full-proxy (Всё, кроме РФ) зарубежные и AI идут в proxy, а .ru напрямую.
+	cfgFull := config.DefaultConfig()
+	cfgFull.RoutingProfile = config.RoutingModeFullProxy
+	appFull := &App{st: state.New(cfgFull)}
+
+	decFullAI, err := appFull.VerifyRouteTarget("chatgpt.com")
+	if err != nil || !decFullAI.Final || decFullAI.Target != string(models.RouteProxy) {
+		t.Fatalf("full-proxy chatgpt.com: expected final=proxy, got %+v (err=%v)", decFullAI, err)
+	}
+	decFullRU, err := appFull.VerifyRouteTarget("gosuslugi.ru")
+	if err != nil || decFullRU.Target != string(models.RouteDirect) {
+		t.Fatalf("full-proxy gosuslugi.ru: expected direct, got %+v (err=%v)", decFullRU, err)
+	}
+
+	// 4. В global (Всё 100% GEO) даже .ru и Telegram.exe идут в proxy (кроме локальных сетей).
+	cfgGlob := config.DefaultConfig()
+	cfgGlob.RoutingProfile = config.RoutingModeGlobal
+	appGlob := &App{st: state.New(cfgGlob)}
+
+	decRu, err := appGlob.VerifyRouteTarget("gosuslugi.ru")
+	if err != nil || !decRu.Final || decRu.Target != string(models.RouteProxy) {
+		t.Fatalf("global gosuslugi.ru: expected final=proxy, got %+v (err=%v)", decRu, err)
+	}
+	decTg, err := appGlob.VerifyRouteTarget("Telegram.exe")
+	if err != nil || !decTg.Final || decTg.Target != string(models.RouteProxy) {
+		t.Fatalf("global Telegram.exe: expected final=proxy, got %+v (err=%v)", decTg, err)
 	}
 }
